@@ -1,0 +1,301 @@
+# Changelog
+
+All notable changes to the Modular OTA System will be documented in this file.
+
+## [1.0.0] - 2025-07-25
+
+### Initial Release
+
+#### ✨ New Features
+
+**ESP32 Loader Firmware**
+- Complete modular OTA update system implementation
+- State machine for safe update management
+- LED status indicators (Yellow=Available, Green=Success, Red=Error)
+- Button-based vehicle idle simulation
+- Comprehensive system API for modules
+- LittleFS filesystem integration
+- WiFi connectivity with retry logic
+- Mock sensor implementations (distance, temperature)
+
+**OTA Updater Module**
+- Automatic update checking (configurable interval)
+- SHA256 hash verification for integrity
+- Resumable downloads with retry mechanism
+- Atomic update installation with rollback
+- Support for multiple storage backends
+- Manifest-based version management
+
+**Module Loader System**
+- Dynamic module loading from binary files
+- Memory management for executable code
+- Module lifecycle management (init/deinit/update)
+- Standardized module interface (ModuleInterface)
+- System API abstraction layer
+- Module health monitoring
+
+**Mock Drivers**
+- Speed Governor v1.0.0 (with highway bug)
+- Speed Governor v1.1.0 (fixes highway speed limit)
+- Standardized C API with function pointers
+- Persistent configuration storage
+- Real-time logging and monitoring
+
+**CI/CD Pipeline**
+- GitHub Actions workflow for automatic builds
+- ESP-IDF toolchain integration
+- Automatic module deployment to Supabase
+- Versioning with git commit tracking
+- SHA256 hash generation and validation
+- Manifest updates on successful deployment
+
+**Storage & Distribution**
+- Supabase Storage integration
+- Versioned module storage (/module/version/)
+- Latest module symlinks (/module/latest/)
+- Public CDN distribution
+- Manifest-based version control
+- RESTful API for module management
+
+**Development Tools**
+- Deployment script for manual uploads
+- Comprehensive build system (Makefiles)
+- Cross-platform development support
+- Serial monitoring and debugging tools
+
+#### 🏗️ Architecture
+
+**System Components:**
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Admin Upload  │───▶│  GitHub Actions │───▶│ Supabase Storage│
+│   (New Module)  │    │   (CI/CD Build) │    │  (Binary Files) │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                                        │
+                                                        ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│      ESP32      │◀───│  OTA Updater    │◀───│   manifest.json │
+│ (Module Loader) │    │ (Check Updates) │    │ (Version Info)  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+**Module Interfaces:**
+- `SystemAPI` - Core system functions for modules
+- `ModuleInterface` - Standard module lifecycle
+- `SpeedGovernorInterface` - Vehicle speed control
+- `DistanceSensorInterface` - Sensor data access
+
+#### 🛠️ Hardware Support
+
+**Supported Platforms:**
+- ESP32 DevKit (all variants)
+- ESP32-WROOM-32
+- ESP32-WROVER (with PSRAM)
+
+**GPIO Configuration:**
+- GPIO 2: Yellow LED (Update Available)
+- GPIO 4: Green LED (Update Success)  
+- GPIO 5: Red LED (Update Failed)
+- GPIO 0: Button (Vehicle Idle Simulation)
+
+**Memory Requirements:**
+- Flash: 4MB minimum (partitioned for OTA)
+- RAM: 320KB (240KB usable)
+- Module Size: 64KB maximum per module
+
+#### 📦 Dependencies
+
+**ESP32 Firmware:**
+- ESP-IDF v5.1.2
+- ArduinoJson v6.21.3
+- LittleFS filesystem
+- mbedTLS for cryptography
+
+**Development Environment:**
+- PlatformIO Core
+- ESP-IDF Toolchain (xtensa-esp32-elf)
+- Git for version control
+
+**CI/CD Pipeline:**
+- GitHub Actions
+- curl for HTTP requests
+- jq for JSON processing
+- sha256sum for hash generation
+
+**Storage Backend:**
+- Supabase Storage (primary)
+- Support for S3-compatible storage
+- CDN distribution capability
+
+#### 🔒 Security Features
+
+**Current Implementation:**
+- SHA256 integrity verification
+- HTTPS/TLS for all communications
+- Safe update states (idle vehicle only)
+- Automatic rollback on verification failure
+- Memory protection for executable code
+
+**Future Enhancements:**
+- Digital signature verification (RSA/ECDSA)
+- Secure boot implementation
+- Hardware security module support
+- Certificate pinning
+- Audit logging and compliance
+
+#### 🚗 Automotive Features
+
+**Vehicle Simulation:**
+- Speed governor with road condition awareness
+- Vehicle state management (idle/driving/parked)
+- Mock sensor data generation
+- Safety-first update policy
+- Real-time telemetry logging
+
+**TATA EV Nexon Use Case:**
+- Demonstrates highway speed limit bug fix
+- Version 1.0.0: Incorrectly limits to 40 km/h on highways
+- Version 1.1.0: Properly allows 100 km/h on highways
+- Real-world automotive problem solving
+
+#### 📊 Monitoring & Diagnostics
+
+**Logging System:**
+- Multi-level logging (DEBUG, INFO, WARN, ERROR)
+- Module-specific log tags
+- Serial console output
+- Persistent log storage capability
+
+**Health Monitoring:**
+- System resource tracking
+- Update success/failure statistics
+- Network connectivity monitoring
+- Module performance metrics
+
+**Fleet Management Ready:**
+- Device identification and registration
+- Centralized update distribution
+- Remote diagnostics capability
+- Update rollout control
+
+#### 🧪 Testing & Validation
+
+**Automated Testing:**
+- Module functionality tests
+- Update flow validation
+- Rollback mechanism testing
+- Integration test suite
+
+**Development Tools:**
+- Serial monitor integration
+- Debug output formatting
+- Module build validation
+- Deployment verification scripts
+
+#### 📚 Documentation
+
+**User Guides:**
+- Complete setup guide (SETUP_GUIDE.md)
+- Hardware assembly instructions
+- Software configuration steps
+- Troubleshooting documentation
+
+**Developer Documentation:**
+- API reference (system_api.h)
+- Module development guidelines
+- Build system documentation
+- CI/CD pipeline guide
+
+**Technical Documentation:**
+- System architecture overview
+- Security considerations
+- Performance characteristics
+- Scaling recommendations
+
+#### 🌍 Deployment Support
+
+**Cloud Platforms:**
+- Supabase (primary)
+- AWS S3 compatible
+- Google Cloud Storage ready
+- Custom backend support
+
+**Geographic Distribution:**
+- CDN integration ready
+- Multi-region deployment
+- Latency optimization
+- Bandwidth management
+
+#### ⚠️ Known Limitations
+
+**Current Constraints:**
+- Simplified dynamic loading (mock implementation)
+- Single ESP32 device focus
+- Basic security model (SHA256 only)
+- Limited to small modules (<64KB)
+
+**Future Development:**
+- True ELF module loading
+- Multi-device fleet management
+- Advanced security features
+- Larger module support
+
+#### 🚀 Getting Started
+
+1. **Hardware Setup**: Assemble ESP32 with LEDs and button
+2. **Software Setup**: Install PlatformIO and ESP-IDF
+3. **Backend Setup**: Create Supabase project and storage bucket
+4. **Repository Setup**: Fork repo and configure GitHub secrets
+5. **Deploy**: Upload firmware and test update flow
+
+#### 📞 Support
+
+**Resources:**
+- GitHub Issues for bug reports
+- Discussions for questions
+- Wiki for advanced topics
+- Email support for enterprise
+
+**Community:**
+- Open source contributors welcome
+- Pull requests encouraged
+- Documentation improvements appreciated
+- Real-world use case sharing
+
+---
+
+### Version Naming Convention
+
+- **Major.Minor.Patch** (Semantic Versioning)
+- **Major**: Breaking changes, major new features
+- **Minor**: New features, backward compatible
+- **Patch**: Bug fixes, minor improvements
+
+### Module Versions
+
+**Speed Governor:**
+- v1.0.0: Initial release with highway bug
+- v1.1.0: Fixed highway speed limit issue
+
+**Distance Sensor:**
+- v1.0.0: Basic distance measurement
+
+### Roadmap
+
+**v1.1.0 (Planned)**
+- Enhanced security with digital signatures
+- Multi-device fleet management
+- Advanced rollback strategies
+- Performance optimizations
+
+**v1.2.0 (Future)**
+- True ELF dynamic loading
+- Hardware security module support
+- Real-time update monitoring
+- Advanced analytics
+
+**v2.0.0 (Long-term)**
+- Production-ready security
+- Full automotive compliance
+- Enterprise fleet management
+- Custom hardware support

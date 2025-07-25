@@ -1,0 +1,168 @@
+name: Build and Deploy Module
+
+on:
+  push:
+    branches: [ main ]
+    paths: 
+      - 'mock_drivers/**'
+  workflow_dispatch:
+
+env:
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+jobs:
+  detect-and-build:
+    runs-on: ubuntu-latest
+    outputs:
+      changed_modules: ${{ steps.detect_changes.outputs.modules }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+
+    - name: Detect changed modules
+      id: detect_changes
+      run: |
+        # Get changed files in mock_drivers directory
+        CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '^mock_drivers/' || echo "")
+        
+        if [ -z "$CHANGED_FILES" ]; then
+          echo "No changes in mock_drivers directory"
+          echo "modules=[]" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        # Extract unique module directories
+        MODULES=$(echo "$CHANGED_FILES" | cut -d'/' -f2 | sort -u | jq -R -s -c 'split("\n")[:-1]')
+        echo "Changed modules: $MODULES"
+        echo "modules=$MODULES" >> $GITHUB_OUTPUT
+
+  build-modules:
+    needs: detect-and-build
+    if: ${{ needs.detect-and-build.outputs.changed_modules != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: ${{ fromJson(needs.detect-and-build.outputs.changed_modules) }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup ESP-IDF
+      uses: espressif/esp-idf-ci-action@v1
+      with:
+        esp_idf_version: v5.1.2
+        target: esp32
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq curl
+
+    - name: Build module
+      working-directory: mock_drivers/${{ matrix.module }}
+      run: |
+        echo "Building module: ${{ matrix.module }}"
+        make clean
+        make build
+        
+        # Verify build output
+        if [ ! -f "build/${{ matrix.module }}.bin" ]; then
+          echo "Build failed: binary not found"
+          exit 1
+        fi
+
+    - name: Create module metadata
+      working-directory: mock_drivers/${{ matrix.module }}
+      run: |
+        # Generate version (using run number + short commit hash)
+        VERSION="1.0.${{ github.run_number }}-$(git rev-parse --short HEAD)"
+        
+        # Calculate SHA256 hash
+        HASH=$(sha256sum build/${{ matrix.module }}.bin | cut -d' ' -f1)
+        
+        # Get file size
+        SIZE=$(stat -c%s "build/${{ matrix.module }}.bin")
+        
+        # Create metadata.json
+        cat > build/metadata.json << EOF
+        {
+          "module_name": "${{ matrix.module }}",
+          "version": "$VERSION",
+          "sha256": "$HASH",
+          "size": $SIZE,
+          "build_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+          "commit_hash": "$(git rev-parse HEAD)",
+          "priority": "normal"
+        }
+        EOF
+        
+        echo "Created metadata for ${{ matrix.module }} v$VERSION"
+        cat build/metadata.json
+
+    - name: Setup Supabase CLI
+      run: |
+        npm install -g @supabase/cli@latest
+
+    - name: Upload to Supabase Storage
+      working-directory: mock_drivers/${{ matrix.module }}
+      run: |
+        # Read metadata
+        VERSION=$(jq -r '.version' build/metadata.json)
+        
+        # Upload binary and metadata to versioned path
+        curl -X POST \
+          "$SUPABASE_URL/storage/v1/object/ota-modules/${{ matrix.module }}/$VERSION/${{ matrix.module }}.bin" \
+          -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+          -H "Content-Type: application/octet-stream" \
+          --data-binary @build/${{ matrix.module }}.bin
+        
+        curl -X POST \
+          "$SUPABASE_URL/storage/v1/object/ota-modules/${{ matrix.module }}/$VERSION/metadata.json" \
+          -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+          -H "Content-Type: application/json" \
+          --data-binary @build/metadata.json
+        
+        # Also upload to latest path for easy access
+        curl -X POST \
+          "$SUPABASE_URL/storage/v1/object/ota-modules/${{ matrix.module }}/latest/${{ matrix.module }}.bin" \
+          -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+          -H "Content-Type: application/octet-stream" \
+          --data-binary @build/${{ matrix.module }}.bin
+        
+        curl -X POST \
+          "$SUPABASE_URL/storage/v1/object/ota-modules/${{ matrix.module }}/latest/metadata.json" \
+          -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+          -H "Content-Type: application/json" \
+          --data-binary @build/metadata.json
+
+    - name: Update manifest
+      run: |
+        # Download current manifest
+        curl -o manifest.json \
+          "$SUPABASE_URL/storage/v1/object/ota-modules/manifest.json" \
+          -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" || echo "{}" > manifest.json
+        
+        # Read version from metadata
+        VERSION=$(jq -r '.version' mock_drivers/${{ matrix.module }}/build/metadata.json)
+        
+        # Update manifest
+        jq --arg module "${{ matrix.module }}" --arg version "$VERSION" \
+          '.[$module] = {
+            "latest_version": $version,
+            "path": "/" + $module + "/",
+            "last_updated": (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
+          }' manifest.json > manifest_updated.json
+        
+        # Upload updated manifest
+        curl -X POST \
+          "$SUPABASE_URL/storage/v1/object/ota-modules/manifest.json" \
+          -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+          -H "Content-Type: application/json" \
+          --data-binary @manifest_updated.json
+        
+        echo "Updated manifest with ${{ matrix.module }} v$VERSION" 

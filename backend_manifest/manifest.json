@@ -1,0 +1,16 @@
+{
+  "speed_governor": {
+    "latest_version": "1.0.0",
+    "path": "/speed_governor/",
+    "last_updated": "2024-01-01T00:00:00Z",
+    "description": "Speed limiting module for vehicle control",
+    "priority": "high"
+  },
+  "distance_sensor": {
+    "latest_version": "1.0.0", 
+    "path": "/distance_sensor/",
+    "last_updated": "2024-01-01T00:00:00Z",
+    "description": "Distance measurement module for obstacle detection",
+    "priority": "normal"
+  }
+} 
