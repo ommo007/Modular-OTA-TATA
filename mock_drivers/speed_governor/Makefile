@@ -27,10 +27,8 @@ LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT)
 all: $(BUILD_DIR)/$(MODULE_NAME).bin
 
 # Create build directory and linker script
-$(BUILD_DIR):
+$(BUILD_DIR)/$(LDSCRIPT):
 	mkdir -p $(BUILD_DIR)
-
-$(BUILD_DIR)/$(LDSCRIPT): | $(BUILD_DIR)
 	@echo "ENTRY($(ENTRY_POINT_FUNC))" > $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "SECTIONS" >> $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "{" >> $(BUILD_DIR)/$(LDSCRIPT)
@@ -38,7 +36,8 @@ $(BUILD_DIR)/$(LDSCRIPT): | $(BUILD_DIR)
 	@echo "  .rodata : { *(.rodata) }" >> $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "}" >> $(BUILD_DIR)/$(LDSCRIPT)
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+	mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT)
