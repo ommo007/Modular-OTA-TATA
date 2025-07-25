@@ -236,7 +236,7 @@ System initialization complete
 
 1. **Modify speed governor code**:
    ```bash
-   # Edit mock_drivers/speed_governor_v2/src/speed_governor.c
+   # Edit mock_drivers/speed_governor/src/speed_governor.c
    # Change MODULE_VERSION to "1.1.1" or similar
    ```
 

@@ -147,8 +147,34 @@ update_status_t ota_updater_download_and_apply_update(OTAUpdater* updater, const
     }
     
     // --- NEW SECURITY STEP ---
-    // Get signature from metadata (you would add JSON parsing here)
-    const char* signature = "placeholder-for-demo-signature"; // Get this from metadata.json
+    // Parse signature from metadata.json
+    // First, read and parse the metadata file
+    File metadata_file = LittleFS.open(metadata_path, "r");
+    if (!metadata_file) {
+        log_error("Failed to open metadata file for signature verification");
+        LittleFS.remove(temp_binary_path);
+        return UPDATE_VERIFICATION_FAILED;
+    }
+    
+    DynamicJsonDocument metadata_doc(1024);
+    DeserializationError error = deserializeJson(metadata_doc, metadata_file);
+    metadata_file.close();
+    
+    if (error) {
+        log_error("Failed to parse metadata JSON for signature");
+        LittleFS.remove(metadata_path);
+        LittleFS.remove(temp_binary_path);
+        return UPDATE_VERIFICATION_FAILED;
+    }
+    
+    // Extract signature from metadata
+    const char* signature = metadata_doc["signature"] | "missing";
+    if (strcmp(signature, "missing") == 0) {
+        log_error("Signature missing from metadata");
+        LittleFS.remove(metadata_path);
+        LittleFS.remove(temp_binary_path);
+        return UPDATE_VERIFICATION_FAILED;
+    }
     if (!verify_signature(temp_binary_path.c_str(), signature, updater->public_key_pem)) {
         log_error("SIGNATURE VERIFICATION FAILED! Aborting update.");
         LittleFS.remove(metadata_path);

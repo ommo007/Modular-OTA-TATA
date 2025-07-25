@@ -28,6 +28,7 @@ enum SystemState {
     STATE_DOWNLOADING_UPDATE,
     STATE_APPLYING_UPDATE,
     STATE_UPDATE_SUCCESS,
+    STATE_UPDATE_FAILURE,
     STATE_ERROR
 };
 
@@ -37,6 +38,7 @@ unsigned long last_update_check = 0;
 unsigned long last_sensor_read = 0;
 unsigned long state_change_time = 0;
 unsigned long success_state_start_time = 0;
+unsigned long failure_state_start_time = 0;
 const unsigned long UPDATE_CHECK_INTERVAL = 30000; // 30 seconds
 const unsigned long SENSOR_READ_INTERVAL = 1000;   // 1 second
 
@@ -269,7 +271,8 @@ void handle_state_machine() {
                     } else {
                         Serial.printf("Update failed for %s\n", module_name);
                         set_led_state_impl(LED_RED, true);
-                        current_state = STATE_NORMAL_OPERATION;
+                        current_state = STATE_UPDATE_FAILURE;
+                        failure_state_start_time = current_time;
                     }
                 }
                 ota_updater_clear_pending_updates(&ota_updater);
@@ -285,6 +288,17 @@ void handle_state_machine() {
                 state_change_time = current_time;
             }
             // Keep green LED on during this state
+            break;
+            
+        case STATE_UPDATE_FAILURE:
+            // Show failure LED for 8 seconds, then return to normal operation
+            if (current_time - failure_state_start_time > 8000) {
+                Serial.println("Update failure display complete, returning to normal operation");
+                set_led_state_impl(LED_RED, false);
+                current_state = STATE_NORMAL_OPERATION;
+                state_change_time = current_time;
+            }
+            // Keep red LED on during this state
             break;
             
         case STATE_ERROR:
