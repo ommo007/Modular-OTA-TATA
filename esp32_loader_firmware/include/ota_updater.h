@@ -31,6 +31,12 @@ typedef struct {
     char priority[16];
 } UpdateInfo;
 
+// Module version tracking structure
+typedef struct {
+    char module_name[32];
+    char current_version[32];
+} TrackedModule;
+
 // OTA Updater Class Interface
 typedef struct {
     // Configuration
@@ -49,6 +55,10 @@ typedef struct {
     UpdateInfo pending_updates[8];  // Max 8 modules
     uint8_t pending_update_count;
     
+    // Current module version tracking
+    TrackedModule tracked_modules[8];  // Max 8 modules
+    uint8_t num_tracked_modules;
+    
 } OTAUpdater;
 
 // Function declarations
@@ -58,6 +68,10 @@ update_status_t ota_updater_download_and_apply_update(OTAUpdater* updater, const
 bool ota_updater_has_pending_updates(OTAUpdater* updater);
 UpdateInfo* ota_updater_get_pending_update(OTAUpdater* updater, const char* module_name);
 void ota_updater_clear_pending_updates(OTAUpdater* updater);
+
+// Module version management
+bool ota_updater_set_module_version(OTAUpdater* updater, const char* module_name, const char* version);
+const char* ota_updater_get_module_version(OTAUpdater* updater, const char* module_name);
 
 // Utility functions
 bool ota_verify_sha256(const char* file_path, const char* expected_hash);

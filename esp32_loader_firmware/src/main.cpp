@@ -101,6 +101,12 @@ void setup() {
     Serial.println("Loading initial modules...");
     if (module_loader_load_module(&module_loader, "speed_governor") == MODULE_LOAD_SUCCESS) {
         Serial.println("Speed governor module loaded successfully");
+        // Track the module version in OTA updater
+        LoadedModule* module = module_loader_get_module(&module_loader, "speed_governor");
+        if (module) {
+            ota_updater_set_module_version(&ota_updater, "speed_governor", module->version);
+            Serial.printf("Tracking speed_governor version: %s\n", module->version);
+        }
     } else {
         Serial.println("Failed to load speed governor module");
     }
@@ -233,7 +239,14 @@ void handle_state_machine() {
                         Serial.printf("Update applied successfully for %s\n", module_name);
                         set_led_state_impl(LED_GREEN, true);
                         // Reload the module
-                        module_loader_reload_module(&module_loader, module_name);
+                        if (module_loader_reload_module(&module_loader, module_name) == MODULE_LOAD_SUCCESS) {
+                            // Update the tracked version
+                            LoadedModule* module = module_loader_get_module(&module_loader, module_name);
+                            if (module) {
+                                ota_updater_set_module_version(&ota_updater, module_name, module->version);
+                                Serial.printf("Updated tracking for %s to version: %s\n", module_name, module->version);
+                            }
+                        }
                     } else {
                         Serial.printf("Update failed for %s\n", module_name);
                         set_led_state_impl(LED_RED, true);
@@ -268,14 +281,19 @@ void update_sensors() {
         
         last_sensor_read = current_time;
         
-        // Test loaded modules
+        // Test loaded modules - showcase both normal and highway conditions
         LoadedModule* speed_module = module_loader_get_module(&module_loader, "speed_governor");
         if (speed_module && speed_module->is_active) {
             // Call module function if available
             SpeedGovernorInterface* speed_interface = (SpeedGovernorInterface*)speed_module->interface->module_functions;
             if (speed_interface && speed_interface->get_speed_limit) {
-                int speed_limit = speed_interface->get_speed_limit(60, 0); // 60 km/h, normal conditions
-                Serial.printf("Current speed limit: %d km/h\n", speed_limit);
+                // Test normal road conditions
+                int normal_speed_limit = speed_interface->get_speed_limit(60, 0); // 60 km/h, normal conditions
+                Serial.printf("Normal road speed limit: %d km/h\n", normal_speed_limit);
+                
+                // Test highway conditions to showcase the fix
+                int highway_speed_limit = speed_interface->get_speed_limit(60, 1); // 60 km/h, highway conditions
+                Serial.printf("Highway speed limit: %d km/h (fixed in v1.1.0)\n", highway_speed_limit);
             }
         }
     }

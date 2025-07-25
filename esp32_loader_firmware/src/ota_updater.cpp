@@ -8,12 +8,14 @@
 #include "mbedtls/pk.h"
 #include "mbedtls/error.h"
 #include "mbedtls/sha256.h"
+#include "mbedtls/base64.h"
 
 // Internal functions
 static bool download_manifest(OTAUpdater* updater, DynamicJsonDocument& manifest);
 static bool parse_manifest_for_updates(OTAUpdater* updater, const DynamicJsonDocument& manifest);
 static bool download_file_from_url(const char* url, const char* local_path);
 static bool calculate_sha256(const char* file_path, char* hash_output);
+static bool calculate_file_hash_raw(const char* file_path, unsigned char* hash_output);
 static void log_error(const char* message);
 static void log_info(const char* message);
 
@@ -32,9 +34,11 @@ bool ota_updater_init(OTAUpdater* updater, const char* server_url, const char* d
     updater->updates_available = false;
     updater->last_check_time = 0;
     updater->pending_update_count = 0;
+    updater->num_tracked_modules = 0;
     
-    // Clear pending updates
+    // Clear pending updates and tracked modules
     memset(updater->pending_updates, 0, sizeof(updater->pending_updates));
+    memset(updater->tracked_modules, 0, sizeof(updater->tracked_modules));
     
     log_info("OTA Updater initialized");
     return true;
@@ -258,21 +262,111 @@ bool ota_rollback_module(const char* module_name) {
     return false;
 }
 
-// Add signature verification function
-static bool verify_signature(const char* file_path, const char* signature_b64, const char* public_key_pem) {
-    // Implementation of signature verification using mbedtls
-    // (This is complex, for now let's add a placeholder that shows the logic)
-    log_info("Signature verification is a placeholder in this demo.");
-    // In a real implementation:
-    // 1. Base64 decode the signature_b64 string.
-    // 2. Calculate the SHA256 hash of the file at file_path.
-    // 3. Use mbedtls_pk_verify() with the public key, the hash, and the decoded signature.
-    // 4. Return true if verification passes.
-    if (strcmp(signature_b64, "placeholder-for-demo-signature") == 0) {
-        log_info("Placeholder signature matched. Continuing for demo purposes.");
+// Module version management functions
+bool ota_updater_set_module_version(OTAUpdater* updater, const char* module_name, const char* version) {
+    if (!updater || !module_name || !version) {
+        return false;
+    }
+    
+    // Check if module is already tracked
+    for (int i = 0; i < updater->num_tracked_modules; i++) {
+        if (strcmp(updater->tracked_modules[i].module_name, module_name) == 0) {
+            strncpy(updater->tracked_modules[i].current_version, version, sizeof(updater->tracked_modules[i].current_version) - 1);
+            updater->tracked_modules[i].current_version[sizeof(updater->tracked_modules[i].current_version) - 1] = '\0';
+            return true;
+        }
+    }
+    
+    // Add new module if there's space
+    if (updater->num_tracked_modules < 8) {
+        TrackedModule* module = &updater->tracked_modules[updater->num_tracked_modules];
+        strncpy(module->module_name, module_name, sizeof(module->module_name) - 1);
+        module->module_name[sizeof(module->module_name) - 1] = '\0';
+        strncpy(module->current_version, version, sizeof(module->current_version) - 1);
+        module->current_version[sizeof(module->current_version) - 1] = '\0';
+        updater->num_tracked_modules++;
         return true;
     }
-    return false;
+    
+    return false; // No space for new modules
+}
+
+const char* ota_updater_get_module_version(OTAUpdater* updater, const char* module_name) {
+    if (!updater || !module_name) {
+        return nullptr;
+    }
+    
+    for (int i = 0; i < updater->num_tracked_modules; i++) {
+        if (strcmp(updater->tracked_modules[i].module_name, module_name) == 0) {
+            return updater->tracked_modules[i].current_version;
+        }
+    }
+    
+    return nullptr; // Module not found
+}
+
+// Add signature verification function
+static bool verify_signature(const char* file_path, const char* signature_b64, const char* public_key_pem) {
+    if (!file_path || !signature_b64 || !public_key_pem) {
+        log_error("Invalid parameters for signature verification");
+        return false;
+    }
+    
+    // For demo purposes, allow placeholder signature to pass
+    if (strcmp(signature_b64, "placeholder-for-demo-signature") == 0) {
+        log_info("Demo mode: Placeholder signature accepted");
+        return true;
+    }
+    
+    mbedtls_pk_context pk;
+    mbedtls_pk_init(&pk);
+    
+    int ret = 0;
+    bool verification_result = false;
+    
+    // Parse the public key
+    ret = mbedtls_pk_parse_public_key(&pk, (const unsigned char*)public_key_pem, strlen(public_key_pem) + 1);
+    if (ret != 0) {
+        char error_buf[100];
+        mbedtls_strerror(ret, error_buf, sizeof(error_buf));
+        Serial.printf("Failed to parse public key: %s\n", error_buf);
+        goto cleanup;
+    }
+    
+    // Calculate SHA256 hash of the file
+    unsigned char file_hash[32];
+    ret = calculate_file_hash_raw(file_path, file_hash);
+    if (!ret) {
+        log_error("Failed to calculate file hash for signature verification");
+        goto cleanup;
+    }
+    
+    // Base64 decode the signature
+    unsigned char signature[256]; // RSA-2048 signature is 256 bytes
+    size_t signature_len = 0;
+    
+    ret = mbedtls_base64_decode(signature, sizeof(signature), &signature_len, 
+                               (const unsigned char*)signature_b64, strlen(signature_b64));
+    if (ret != 0) {
+        log_error("Failed to decode base64 signature");
+        goto cleanup;
+    }
+    
+    // Verify the signature
+    ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, file_hash, sizeof(file_hash), signature, signature_len);
+    if (ret == 0) {
+        log_info("Signature verification PASSED");
+        verification_result = true;
+    } else {
+        char error_buf[100];
+        mbedtls_strerror(ret, error_buf, sizeof(error_buf));
+        Serial.printf("Signature verification FAILED: %s\n", error_buf);
+        verification_result = false;
+    }
+    
+cleanup:
+    mbedtls_pk_free(&pk);
+    return verification_result;
 }
 
 // Internal helper functions
@@ -319,8 +413,19 @@ static bool parse_manifest_for_updates(OTAUpdater* updater, const DynamicJsonDoc
             
             String available_version = module_info["latest_version"].as<String>();
             
-            // Get current version (for demo, assume we start with 1.0.0)
-            String current_version = "1.0.0";
+            // Get current version from stored module versions
+            String current_version = "unknown";
+            for (int j = 0; j < updater->num_tracked_modules; j++) {
+                if (strcmp(updater->tracked_modules[j].module_name, module_name) == 0) {
+                    current_version = String(updater->tracked_modules[j].current_version);
+                    break;
+                }
+            }
+            
+            // If module not tracked, assume it needs to be installed (start with "0.0.0")
+            if (current_version == "unknown") {
+                current_version = "0.0.0";
+            }
             
             // Simple version comparison (in real implementation, use semantic versioning)
             if (available_version != current_version) {
@@ -423,6 +528,33 @@ static bool calculate_sha256(const char* file_path, char* hash_output) {
         sprintf(hash_output + (i * 2), "%02x", hash[i]);
     }
     hash_output[64] = '\0';
+    
+    return true;
+}
+
+static bool calculate_file_hash_raw(const char* file_path, unsigned char* hash_output) {
+    File file = LittleFS.open(file_path, "r");
+    if (!file) {
+        return false;
+    }
+    
+    mbedtls_md_context_t ctx;
+    mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
+    
+    mbedtls_md_init(&ctx);
+    mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 0);
+    mbedtls_md_starts(&ctx);
+    
+    uint8_t buffer[512];
+    while (file.available()) {
+        size_t bytesRead = file.readBytes((char*)buffer, sizeof(buffer));
+        mbedtls_md_update(&ctx, buffer, bytesRead);
+    }
+    
+    mbedtls_md_finish(&ctx, hash_output);
+    mbedtls_md_free(&ctx);
+    
+    file.close();
     
     return true;
 }
