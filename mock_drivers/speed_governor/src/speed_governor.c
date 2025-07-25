@@ -2,8 +2,8 @@
 #include <stddef.h>
 
 // Module metadata - UPDATED VERSION
-static const char* MODULE_NAME = "speed_governor";
-static const char* MODULE_VERSION = "1.1.0";  // Updated version
+#define MODULE_NAME "speed_governor"
+#define MODULE_VERSION "1.1.0"  // Updated version
 
 // Global system API pointer
 static SystemAPI* sys_api = NULL;
