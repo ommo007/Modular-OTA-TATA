@@ -2,6 +2,35 @@
 
 A complete demonstration of a real-world automotive Over-The-Air (OTA) update system using ESP32, showcasing modular driver updates with CI/CD integration.
 
+## 🚀 **Quick Setup for Supabase Upload**
+
+### 🔑 **Required GitHub Secrets**
+
+To enable automatic module uploads to Supabase, set these repository secrets:
+
+1. Go to your GitHub repo → **Settings** → **Secrets and Variables** → **Actions**
+2. Add these secrets:
+
+| Secret Name | Value | How to Get |
+|-------------|-------|------------|
+| `SUPABASE_URL` | `https://your-project-id.supabase.co` | Supabase Dashboard → Settings → API → Project URL |
+| `SUPABASE_SERVICE_KEY` | `eyJhbGc...` | Supabase Dashboard → Settings → API → service_role key |
+
+### 🪣 **Create Storage Bucket**
+
+1. Go to **Storage** in Supabase Dashboard
+2. Create bucket named: `ota-modules`
+3. Make it **Public** for direct ESP32 downloads
+4. The workflow will automatically create folder structure
+
+### 🎯 **Test Upload**
+
+Once secrets are set, any change to `mock_drivers/**` files will trigger automatic build and upload!
+
+Or manually trigger with: **Actions** → **Supabase OTA Upload** → **Run workflow**
+
+---
+
 ## 🎉 MAJOR UPDATE: Fully Functional Implementation!
 
 ### ✅ **Critical Issues Fixed:**
