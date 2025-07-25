@@ -24,12 +24,25 @@ jobs:
       with:
         files: mock_drivers/**
 
-    - name: Setup ESP-IDF
+    - name: Setup ESP32 Toolchain
       if: steps.changed_modules.outputs.any_changed == 'true'
-      uses: espressif/esp-idf-ci-action@v1
-      with:
-        esp_idf_version: v5.1.2
-        target: esp32
+      run: |
+        # Install ESP32 toolchain for building mock drivers
+        sudo apt-get update
+        sudo apt-get install -y wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0 jq
+        
+        # Download and install ESP32 toolchain
+        mkdir -p ~/.espressif
+        cd ~/.espressif
+        wget https://dl.espressif.com/dl/xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
+        tar -xzf xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
+        
+        # Add toolchain to PATH
+        echo "$HOME/.espressif/xtensa-esp32-elf/bin" >> $GITHUB_PATH
+        
+        # Verify toolchain installation
+        export PATH="$HOME/.espressif/xtensa-esp32-elf/bin:$PATH"
+        xtensa-esp32-elf-gcc --version
 
     - name: Build and Deploy Each Changed Module
       if: steps.changed_modules.outputs.any_changed == 'true'
@@ -65,7 +78,8 @@ jobs:
             echo "--- Processing module: $module ---"
             cd "mock_drivers/$module"
 
-            # 1. Build module
+            # 1. Build module (ensure toolchain is in PATH)
+            export PATH="$HOME/.espressif/xtensa-esp32-elf/bin:$PATH"
             make clean && make build
             if [ ! -f "build/$module.bin" ]; then
                 echo "Build failed: binary not found for $module"
