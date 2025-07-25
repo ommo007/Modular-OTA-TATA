@@ -27,6 +27,7 @@ enum SystemState {
     STATE_WAIT_FOR_IDLE,
     STATE_DOWNLOADING_UPDATE,
     STATE_APPLYING_UPDATE,
+    STATE_UPDATE_SUCCESS,
     STATE_ERROR
 };
 
@@ -35,6 +36,7 @@ SystemState current_state = STATE_INIT;
 unsigned long last_update_check = 0;
 unsigned long last_sensor_read = 0;
 unsigned long state_change_time = 0;
+unsigned long success_state_start_time = 0;
 const unsigned long UPDATE_CHECK_INTERVAL = 30000; // 30 seconds
 const unsigned long SENSOR_READ_INTERVAL = 1000;   // 1 second
 
@@ -99,6 +101,8 @@ void setup() {
     
     // Load initial modules
     Serial.println("Loading initial modules...");
+    
+    // Load speed governor module
     if (module_loader_load_module(&module_loader, "speed_governor") == MODULE_LOAD_SUCCESS) {
         Serial.println("Speed governor module loaded successfully");
         // Track the module version in OTA updater
@@ -109,6 +113,19 @@ void setup() {
         }
     } else {
         Serial.println("Failed to load speed governor module");
+    }
+    
+    // Load distance sensor module
+    if (module_loader_load_module(&module_loader, "distance_sensor") == MODULE_LOAD_SUCCESS) {
+        Serial.println("Distance sensor module loaded successfully");
+        // Track the module version in OTA updater
+        LoadedModule* module = module_loader_get_module(&module_loader, "distance_sensor");
+        if (module) {
+            ota_updater_set_module_version(&ota_updater, "distance_sensor", module->version);
+            Serial.printf("Tracking distance_sensor version: %s\n", module->version);
+        }
+    } else {
+        Serial.println("Failed to load distance sensor module");
     }
     
     current_state = STATE_NORMAL_OPERATION;
@@ -247,14 +264,27 @@ void handle_state_machine() {
                                 Serial.printf("Updated tracking for %s to version: %s\n", module_name, module->version);
                             }
                         }
+                        current_state = STATE_UPDATE_SUCCESS;
+                        success_state_start_time = current_time;
                     } else {
                         Serial.printf("Update failed for %s\n", module_name);
                         set_led_state_impl(LED_RED, true);
+                        current_state = STATE_NORMAL_OPERATION;
                     }
                 }
-                current_state = STATE_NORMAL_OPERATION;
                 ota_updater_clear_pending_updates(&ota_updater);
             }
+            break;
+            
+        case STATE_UPDATE_SUCCESS:
+            // Show success LED for 5 seconds, then return to normal operation
+            if (current_time - success_state_start_time > 5000) {
+                Serial.println("Update success display complete, returning to normal operation");
+                set_led_state_impl(LED_GREEN, false);
+                current_state = STATE_NORMAL_OPERATION;
+                state_change_time = current_time;
+            }
+            // Keep green LED on during this state
             break;
             
         case STATE_ERROR:
@@ -294,6 +324,30 @@ void update_sensors() {
                 // Test highway conditions to showcase the fix
                 int highway_speed_limit = speed_interface->get_speed_limit(60, 1); // 60 km/h, highway conditions
                 Serial.printf("Highway speed limit: %d km/h (fixed in v1.1.0)\n", highway_speed_limit);
+            }
+        }
+        
+        // Test distance sensor module
+        LoadedModule* distance_module = module_loader_get_module(&module_loader, "distance_sensor");
+        if (distance_module && distance_module->is_active) {
+            DistanceSensorInterface* distance_interface = (DistanceSensorInterface*)distance_module->interface->module_functions;
+            if (distance_interface && distance_interface->get_distance) {
+                float distance = distance_interface->get_distance();
+                
+                // Display units based on version to show the difference
+                if (strcmp(distance_module->version, "1.0.0") == 0) {
+                    Serial.printf("Distance reading: %.1f cm (from v%s)\n", distance, distance_module->version);
+                    // v1.0.0 uses cm, so check for 30cm threshold
+                    if (distance_interface->is_object_detected && distance_interface->is_object_detected(30.0f)) {
+                        Serial.println("Object detected within 30cm!");
+                    }
+                } else {
+                    Serial.printf("Distance reading: %.0f mm (from v%s - NEW UNITS!)\n", distance, distance_module->version);
+                    // v1.1.0 uses mm, so check for 300mm threshold (same as 30cm)
+                    if (distance_interface->is_object_detected && distance_interface->is_object_detected(300.0f)) {
+                        Serial.println("Object detected within 300mm (30cm)!");
+                    }
+                }
             }
         }
     }
@@ -395,4 +449,5 @@ const char* get_device_id_impl() {
 const char* get_module_version_impl(const char* module_name) {
     LoadedModule* module = module_loader_get_module(&module_loader, module_name);
     return module ? module->version : "unknown";
+} 
 } 
