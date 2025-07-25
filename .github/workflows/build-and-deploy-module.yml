@@ -47,7 +47,8 @@ jobs:
     - name: Build and Deploy Each Changed Module
       if: steps.changed_modules.outputs.any_changed == 'true'
       env:
-        # For the security signing step, you would create these secrets in GitHub
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         #SIGNING_PRIVATE_KEY: ${{ secrets.SIGNING_PRIVATE_KEY }}
         CHANGED_FILES: ${{ steps.changed_modules.outputs.all_changed_files }}
       run: |
