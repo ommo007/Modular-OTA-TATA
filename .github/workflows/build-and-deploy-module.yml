@@ -47,16 +47,30 @@ jobs:
     - name: Build and Deploy Each Changed Module
       if: steps.changed_modules.outputs.any_changed == 'true'
       env:
-        # For the security signing step, you would create these secrets in GitHub
-        #SIGNING_PRIVATE_KEY: ${{ secrets.SIGNING_PRIVATE_KEY }}
+        # We still define them here for context, but will pass them as args
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         CHANGED_FILES: ${{ steps.changed_modules.outputs.all_changed_files }}
       run: |
-        # Use a script to handle the logic for each changed module
-        # This is cleaner than a complex matrix strategy for this use case
-        # Create the script
+        # Create the deployment script
         cat > deploy_script.sh << 'EOF'
         #!/bin/bash
         set -e
+
+        # The script now accepts secrets as arguments
+        SUPABASE_URL="$1"
+        SUPABASE_SERVICE_KEY="$2"
+
+        if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_KEY" ]; then
+            echo "Error: Supabase URL or Service Key not provided to script."
+            echo "URL length: ${#SUPABASE_URL} characters"
+            echo "Key length: ${#SUPABASE_SERVICE_KEY} characters"
+            exit 1
+        fi
+
+        echo "Using Supabase URL: $SUPABASE_URL"
+        echo "Service key provided: ${#SUPABASE_SERVICE_KEY} characters"
+
         # Create an array of unique module directories that have changed
         declare -A modules_to_build
         for file in $CHANGED_FILES; do
@@ -87,7 +101,7 @@ jobs:
             fi
 
             # 2. Package metadata
-            VERSION="1.1.${{ github.run_number }}"
+            VERSION="1.2.${{ github.run_number }}" # Incrementing minor version for clarity
             HASH=$(sha256sum "build/$module.bin" | cut -d' ' -f1)
             # --- SECURITY ENHANCEMENT (SIGNING) ---
             # To enable, uncomment the next 3 lines and add the SIGNING_PRIVATE_KEY secret
@@ -105,13 +119,15 @@ jobs:
               > build/metadata.json
             cat build/metadata.json
 
-            # 3. Upload to Supabase
+            # 3. Upload to Supabase using secrets passed as arguments
+            echo "Uploading binary for $module..."
             curl -f -X POST \
               "$SUPABASE_URL/storage/v1/object/ota-modules/$module/latest/$module.bin" \
               -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
               -H "Content-Type: application/octet-stream" \
               --data-binary @"build/$module.bin"
 
+            echo "Uploading metadata for $module..."
             curl -f -X POST \
               "$SUPABASE_URL/storage/v1/object/ota-modules/$module/latest/metadata.json" \
               -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
@@ -143,5 +159,6 @@ jobs:
         echo "Manifest updated successfully."
         EOF
 
-        # Run the script
-        bash deploy_script.sh 
+        # Make the script executable and run it, passing secrets as arguments
+        chmod +x deploy_script.sh
+        ./deploy_script.sh "${{ secrets.SUPABASE_URL }}" "${{ secrets.SUPABASE_SERVICE_KEY }}" 
