@@ -37,6 +37,7 @@ typedef struct {
     const char* server_url;
     const char* manifest_path;
     const char* device_id;
+    const char* public_key_pem;
     uint32_t check_interval_ms;
     
     // State
@@ -51,7 +52,7 @@ typedef struct {
 } OTAUpdater;
 
 // Function declarations
-bool ota_updater_init(OTAUpdater* updater, const char* server_url, const char* device_id);
+bool ota_updater_init(OTAUpdater* updater, const char* server_url, const char* device_id, const char* public_key);
 update_status_t ota_updater_check_for_updates(OTAUpdater* updater);
 update_status_t ota_updater_download_and_apply_update(OTAUpdater* updater, const char* module_name);
 bool ota_updater_has_pending_updates(OTAUpdater* updater);

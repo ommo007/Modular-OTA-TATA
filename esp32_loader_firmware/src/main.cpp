@@ -8,12 +8,7 @@
 #include "system_api.h"
 #include "ota_updater.h"
 #include "module_loader.h"
-
-// Configuration constants
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-const char* SERVER_URL = "https://YOUR_SUPABASE_URL.supabase.co";
-const char* DEVICE_ID = "esp32-demo-001";
+#include "config.h"  // Include externalized configuration
 
 // GPIO Pin definitions
 #define LED_YELLOW_PIN 2
@@ -89,7 +84,7 @@ void setup() {
     setup_system_api();
     
     // Initialize OTA updater
-    if (!ota_updater_init(&ota_updater, SERVER_URL, DEVICE_ID)) {
+    if (!ota_updater_init(&ota_updater, SERVER_URL, DEVICE_ID, SIGNING_PUBLIC_KEY)) {
         Serial.println("Failed to initialize OTA updater");
         current_state = STATE_ERROR;
         return;

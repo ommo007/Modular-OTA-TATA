@@ -1,0 +1,25 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// WiFi Credentials
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+// Supabase Project URL
+#define SERVER_URL "https://YOUR_SUPABASE_URL.supabase.co"
+
+// A unique identifier for this device
+#define DEVICE_ID "esp32-demo-001"
+
+// --- SECURITY: PUBLIC KEY ---
+// This public key corresponds to the private key used in the CI/CD pipeline to sign updates.
+// The private key should NEVER be stored here. Keep it as a GitHub secret.
+// To generate keys:
+// openssl ecparam -name prime256v1 -genkey -noout -out private_key.pem
+// openssl ec -in private_key.pem -pubout -out public_key.pem
+const char* SIGNING_PUBLIC_KEY = \
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...Replace...With...Your...Key\n"
+    "-----END PUBLIC KEY-----\n";
+
+#endif // CONFIG_H 

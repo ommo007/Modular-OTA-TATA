@@ -166,18 +166,27 @@ ESP32 DevKit          Components
    code . # or open in your preferred editor
    ```
 
-2. **Edit `src/main.cpp`** and update these lines:
-   ```cpp
-   // Line ~15-18: Update with your credentials
-   const char* WIFI_SSID = "Your_WiFi_Name";
-   const char* WIFI_PASSWORD = "Your_WiFi_Password";
-   const char* SERVER_URL = "https://xxxxxxxxxxx.supabase.co";
-   const char* DEVICE_ID = "esp32-demo-001"; // Unique device ID
+2. **Copy and configure config file**:
+   ```bash
+   # Copy the example config file
+   cp include/config.h.example include/config.h
+   
+   # Edit the config file with your credentials
+   # Update WIFI_SSID, WIFI_PASSWORD, and SERVER_URL
    ```
 
-3. **Verify pin assignments** match your wiring:
+3. **Edit `include/config.h`** and update these values:
    ```cpp
-   // Lines ~21-25: GPIO pin definitions
+   // Update with your WiFi credentials
+   #define WIFI_SSID "Your_WiFi_Name"
+   #define WIFI_PASSWORD "Your_WiFi_Password"
+   #define SERVER_URL "https://xxxxxxxxxxx.supabase.co"
+   #define DEVICE_ID "esp32-demo-001" // Unique device ID
+   ```
+
+4. **Verify pin assignments** match your wiring:
+   ```cpp
+   // In main.cpp: GPIO pin definitions
    #define LED_YELLOW_PIN 2
    #define LED_GREEN_PIN 4
    #define LED_RED_PIN 5

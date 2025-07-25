@@ -4,13 +4,12 @@
 #include <esp_system.h>
 
 // Internal function prototypes
-static LoadedModule* find_module_slot(ModuleLoader* loader);
 static LoadedModule* find_loaded_module(ModuleLoader* loader, const char* module_name);
-static bool load_module_from_file(ModuleLoader* loader, const char* module_name, LoadedModule* module_slot);
-static bool validate_module_binary(const void* code_data, size_t code_size);
-static ModuleInterface* extract_module_interface(void* code_memory, size_t code_size);
 static void log_module_info(const char* message);
 static void log_module_error(const char* message);
+
+// This is the function signature we expect to find at the start of our binary blob.
+typedef ModuleInterface* (*GetModuleInterfaceFunc)(void);
 
 bool module_loader_init(ModuleLoader* loader, SystemAPI* api) {
     if (!loader || !api) {
@@ -27,75 +26,101 @@ bool module_loader_init(ModuleLoader* loader, SystemAPI* api) {
 }
 
 module_status_t module_loader_load_module(ModuleLoader* loader, const char* module_name) {
-    if (!loader || !module_name) {
-        return MODULE_LOAD_INVALID_FORMAT;
-    }
-    
-    // Check if module is already loaded
     if (module_loader_is_module_loaded(loader, module_name)) {
-        log_module_error("Module already loaded");
         return MODULE_LOAD_ALREADY_LOADED;
     }
-    
-    // Find available slot
-    LoadedModule* module_slot = find_module_slot(loader);
-    if (!module_slot) {
-        log_module_error("No available module slots");
-        return MODULE_LOAD_MEMORY_ERROR;
-    }
-    
-    // Load module from file
-    if (!load_module_from_file(loader, module_name, module_slot)) {
+
+    String file_path = "/" + String(module_name) + ".bin";
+    if (!LittleFS.exists(file_path)) {
+        log_module_error("Module file not found");
         return MODULE_LOAD_FILE_NOT_FOUND;
     }
-    
+
+    File file = LittleFS.open(file_path, "r");
+    size_t file_size = file.size();
+    if (file_size == 0) {
+        log_module_error("Module file is empty");
+        file.close();
+        return MODULE_LOAD_INVALID_FORMAT;
+    }
+
+    // Allocate memory with execute permissions
+    void* code_memory = heap_caps_malloc(file_size, MALLOC_CAP_EXEC);
+    if (!code_memory) {
+        log_module_error("Failed to allocate executable memory");
+        file.close();
+        return MODULE_LOAD_MEMORY_ERROR;
+    }
+
+    // Read the binary into the allocated memory
+    if (file.read((uint8_t*)code_memory, file_size) != file_size) {
+        log_module_error("Failed to read module into memory");
+        heap_caps_free(code_memory);
+        file.close();
+        return MODULE_LOAD_INVALID_FORMAT;
+    }
+    file.close();
+
+    // **THE MAGIC HAPPENS HERE**
+    // Cast the beginning of our executable memory to our entry point function pointer
+    GetModuleInterfaceFunc get_interface = (GetModuleInterfaceFunc)code_memory;
+    ModuleInterface* interface = get_interface();
+
+    if (!interface || !interface->module_name || !interface->initialize) {
+        log_module_error("Invalid module interface returned");
+        heap_caps_free(code_memory);
+        return MODULE_LOAD_INVALID_FORMAT;
+    }
+
+    // Initialize the module, passing the system API
+    if (!interface->initialize(loader->system_api)) {
+        log_module_error("Module initialization function failed");
+        heap_caps_free(code_memory);
+        return MODULE_LOAD_INIT_FAILED;
+    }
+
+    // Find a slot and store the loaded module info
+    LoadedModule* module_slot = &loader->modules[loader->loaded_count];
+    strncpy(module_slot->name, interface->module_name, sizeof(module_slot->name) - 1);
+    strncpy(module_slot->version, interface->module_version, sizeof(module_slot->version) - 1);
+    module_slot->code_memory = code_memory;
+    module_slot->code_size = file_size;
+    module_slot->interface = interface;
+    module_slot->is_active = true;
+    module_slot->load_time = millis();
+
     loader->loaded_count++;
     log_module_info("Module loaded successfully");
+    module_loader_list_loaded_modules(loader);
     return MODULE_LOAD_SUCCESS;
 }
 
 module_status_t module_loader_unload_module(ModuleLoader* loader, const char* module_name) {
-    if (!loader || !module_name) {
-        return MODULE_UNLOAD_ERROR;
-    }
-    
     LoadedModule* module = find_loaded_module(loader, module_name);
-    if (!module) {
-        return MODULE_UNLOAD_NOT_FOUND;
-    }
-    
-    // Call module's deinitialize function if available
+    if (!module) return MODULE_UNLOAD_NOT_FOUND;
+
     if (module->interface && module->interface->deinitialize) {
         module->interface->deinitialize();
     }
-    
-    // Free executable memory
     if (module->code_memory) {
-        module_loader_free_executable_memory(module->code_memory, module->code_size);
+        heap_caps_free(module->code_memory);
     }
-    
-    // Clear module slot
-    memset(module, 0, sizeof(LoadedModule));
+
+    // Shift remaining modules to fill the gap (simple approach)
+    int module_index = module - loader->modules;
+    for (int i = module_index; i < loader->loaded_count - 1; i++) {
+        loader->modules[i] = loader->modules[i + 1];
+    }
+    memset(&loader->modules[loader->loaded_count - 1], 0, sizeof(LoadedModule));
     loader->loaded_count--;
-    
+
     log_module_info("Module unloaded successfully");
     return MODULE_UNLOAD_SUCCESS;
 }
 
 module_status_t module_loader_reload_module(ModuleLoader* loader, const char* module_name) {
-    if (!loader || !module_name) {
-        return MODULE_LOAD_INVALID_FORMAT;
-    }
-    
-    // Unload if currently loaded
-    if (module_loader_is_module_loaded(loader, module_name)) {
-        module_status_t unload_result = module_loader_unload_module(loader, module_name);
-        if (unload_result != MODULE_UNLOAD_SUCCESS) {
-            return MODULE_LOAD_INVALID_FORMAT;
-        }
-    }
-    
-    // Load the module again
+    log_module_info("Reloading module...");
+    module_loader_unload_module(loader, module_name);
     return module_loader_load_module(loader, module_name);
 }
 
@@ -133,98 +158,9 @@ void module_loader_list_loaded_modules(ModuleLoader* loader) {
     }
 }
 
-void* module_loader_allocate_executable_memory(size_t size) {
-    // Allocate executable memory (IRAM for ESP32)
-    void* memory = heap_caps_malloc(size, MALLOC_CAP_EXEC);
-    if (memory) {
-        Serial.printf("Allocated %d bytes of executable memory at 0x%p\n", size, memory);
-    } else {
-        log_module_error("Failed to allocate executable memory");
-    }
-    return memory;
-}
-
-void module_loader_free_executable_memory(void* ptr, size_t size) {
-    if (ptr) {
-        Serial.printf("Freeing %d bytes of executable memory at 0x%p\n", size, ptr);
-        heap_caps_free(ptr);
-    }
-}
-
-bool module_loader_validate_module(const char* file_path) {
-    File file = LittleFS.open(file_path, "r");
-    if (!file) {
-        return false;
-    }
-    
-    size_t file_size = file.size();
-    file.close();
-    
-    // Basic validation - check if file size is reasonable
-    if (file_size < 100 || file_size > 65536) {
-        Serial.printf("Invalid module size: %d bytes\n", file_size);
-        return false;
-    }
-    
-    return true;
-}
-
-bool module_loader_check_abi_compatibility(const void* code_data, size_t code_size) {
-    // Basic ABI compatibility check
-    // In a real implementation, you would check ELF headers, symbols, etc.
-    if (!code_data || code_size == 0) {
-        return false;
-    }
-    
-    // For this demo, we assume all modules are compatible
-    return true;
-}
-
-bool module_loader_file_exists(const char* module_name) {
-    String file_path = "/" + String(module_name) + ".bin";
-    return LittleFS.exists(file_path);
-}
-
-size_t module_loader_get_file_size(const char* module_name) {
-    String file_path = "/" + String(module_name) + ".bin";
-    File file = LittleFS.open(file_path, "r");
-    if (file) {
-        size_t size = file.size();
-        file.close();
-        return size;
-    }
-    return 0;
-}
-
-bool module_loader_read_module_file(const char* module_name, void* buffer, size_t buffer_size) {
-    String file_path = "/" + String(module_name) + ".bin";
-    File file = LittleFS.open(file_path, "r");
-    if (!file) {
-        return false;
-    }
-    
-    size_t file_size = file.size();
-    if (file_size > buffer_size) {
-        file.close();
-        return false;
-    }
-    
-    size_t bytes_read = file.readBytes((char*)buffer, file_size);
-    file.close();
-    
-    return bytes_read == file_size;
-}
+// Remove the now-unused helper functions since we integrated the logic directly
 
 // Internal helper functions
-static LoadedModule* find_module_slot(ModuleLoader* loader) {
-    for (int i = 0; i < MAX_LOADED_MODULES; i++) {
-        if (!loader->modules[i].is_active) {
-            return &loader->modules[i];
-        }
-    }
-    return nullptr;
-}
-
 static LoadedModule* find_loaded_module(ModuleLoader* loader, const char* module_name) {
     for (int i = 0; i < MAX_LOADED_MODULES; i++) {
         LoadedModule* module = &loader->modules[i];
@@ -233,123 +169,6 @@ static LoadedModule* find_loaded_module(ModuleLoader* loader, const char* module
         }
     }
     return nullptr;
-}
-
-static bool load_module_from_file(ModuleLoader* loader, const char* module_name, LoadedModule* module_slot) {
-    // Check if module file exists
-    if (!module_loader_file_exists(module_name)) {
-        log_module_error("Module file not found");
-        return false;
-    }
-    
-    // Validate module
-    String file_path = "/" + String(module_name) + ".bin";
-    if (!module_loader_validate_module(file_path.c_str())) {
-        log_module_error("Module validation failed");
-        return false;
-    }
-    
-    // Get file size
-    size_t file_size = module_loader_get_file_size(module_name);
-    if (file_size == 0) {
-        log_module_error("Invalid module file size");
-        return false;
-    }
-    
-    // Allocate executable memory
-    void* code_memory = module_loader_allocate_executable_memory(file_size);
-    if (!code_memory) {
-        log_module_error("Failed to allocate memory for module");
-        return false;
-    }
-    
-    // Read module into memory
-    if (!module_loader_read_module_file(module_name, code_memory, file_size)) {
-        log_module_error("Failed to read module file");
-        module_loader_free_executable_memory(code_memory, file_size);
-        return false;
-    }
-    
-    // Validate binary compatibility
-    if (!validate_module_binary(code_memory, file_size)) {
-        log_module_error("Module binary validation failed");
-        module_loader_free_executable_memory(code_memory, file_size);
-        return false;
-    }
-    
-    // Extract module interface
-    ModuleInterface* interface = extract_module_interface(code_memory, file_size);
-    if (!interface) {
-        log_module_error("Failed to extract module interface");
-        module_loader_free_executable_memory(code_memory, file_size);
-        return false;
-    }
-    
-    // Initialize module
-    if (interface->initialize && !interface->initialize(loader->system_api)) {
-        log_module_error("Module initialization failed");
-        module_loader_free_executable_memory(code_memory, file_size);
-        return false;
-    }
-    
-    // Fill module slot
-    strncpy(module_slot->name, module_name, sizeof(module_slot->name) - 1);
-    strncpy(module_slot->version, interface->module_version ? interface->module_version : "unknown", 
-           sizeof(module_slot->version) - 1);
-    module_slot->code_memory = code_memory;
-    module_slot->code_size = file_size;
-    module_slot->interface = interface;
-    module_slot->is_active = true;
-    module_slot->load_time = millis();
-    
-    Serial.printf("Module %s v%s loaded successfully\n", module_slot->name, module_slot->version);
-    return true;
-}
-
-static bool validate_module_binary(const void* code_data, size_t code_size) {
-    // Simple validation - check for basic patterns
-    // In a real implementation, you would check ELF headers, magic numbers, etc.
-    if (!code_data || code_size < 32) {
-        return false;
-    }
-    
-    // For this demo, assume all binaries are valid
-    return true;
-}
-
-static ModuleInterface* extract_module_interface(void* code_memory, size_t code_size) {
-    // This is a simplified approach - in reality, you would need to:
-    // 1. Parse the ELF/binary format
-    // 2. Find the symbol table
-    // 3. Locate the get_module_interface function
-    // 4. Call it to get the interface
-    
-    // For this demo, we assume the interface is at a fixed offset
-    // or use a simple function pointer cast (very unsafe in real code!)
-    
-    // This is a mock implementation - real dynamic loading is much more complex
-    typedef ModuleInterface* (*GetModuleInterfaceFunc)(void);
-    
-    // WARNING: This is highly unsafe and won't work with real binaries
-    // It's just for demonstration purposes
-    
-    // In a real implementation, you would:
-    // 1. Use a proper ELF loader
-    // 2. Resolve symbols and relocations
-    // 3. Set up proper calling conventions
-    
-    // For now, return a mock interface
-    static ModuleInterface mock_interface = {
-        .module_name = "mock_module",
-        .module_version = "1.0.0",
-        .initialize = nullptr,
-        .deinitialize = nullptr,
-        .update = nullptr,
-        .module_functions = nullptr
-    };
-    
-    log_module_error("WARNING: Using mock module interface - real dynamic loading not implemented");
-    return &mock_interface;
 }
 
 static void log_module_info(const char* message) {

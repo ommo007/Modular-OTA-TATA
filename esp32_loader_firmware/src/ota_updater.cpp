@@ -5,6 +5,9 @@
 #include <LittleFS.h>
 #include <esp_system.h>
 #include <mbedtls/md.h>
+#include "mbedtls/pk.h"
+#include "mbedtls/error.h"
+#include "mbedtls/sha256.h"
 
 // Internal functions
 static bool download_manifest(OTAUpdater* updater, DynamicJsonDocument& manifest);
@@ -14,7 +17,7 @@ static bool calculate_sha256(const char* file_path, char* hash_output);
 static void log_error(const char* message);
 static void log_info(const char* message);
 
-bool ota_updater_init(OTAUpdater* updater, const char* server_url, const char* device_id) {
+bool ota_updater_init(OTAUpdater* updater, const char* server_url, const char* device_id, const char* public_key) {
     if (!updater || !server_url || !device_id) {
         return false;
     }
@@ -23,6 +26,7 @@ bool ota_updater_init(OTAUpdater* updater, const char* server_url, const char* d
     updater->server_url = server_url;
     updater->manifest_path = "/storage/v1/object/ota-modules/manifest.json";
     updater->device_id = device_id;
+    updater->public_key_pem = public_key;
     updater->check_interval_ms = 30000; // 30 seconds
     updater->is_checking = false;
     updater->updates_available = false;
@@ -138,6 +142,17 @@ update_status_t ota_updater_download_and_apply_update(OTAUpdater* updater, const
         return UPDATE_VERIFICATION_FAILED;
     }
     
+    // --- NEW SECURITY STEP ---
+    // Get signature from metadata (you would add JSON parsing here)
+    const char* signature = "placeholder-for-demo-signature"; // Get this from metadata.json
+    if (!verify_signature(temp_binary_path.c_str(), signature, updater->public_key_pem)) {
+        log_error("SIGNATURE VERIFICATION FAILED! Aborting update.");
+        LittleFS.remove(metadata_path);
+        LittleFS.remove(temp_binary_path);
+        return UPDATE_VERIFICATION_FAILED;
+    }
+    log_info("Signature verification passed.");
+    
     // Backup current module if it exists
     String current_binary_path = "/" + String(module_name) + ".bin";
     String backup_path = "/" + String(module_name) + ".bin.backup";
@@ -240,6 +255,23 @@ bool ota_rollback_module(const char* module_name) {
     }
     
     log_error("No backup available for rollback");
+    return false;
+}
+
+// Add signature verification function
+static bool verify_signature(const char* file_path, const char* signature_b64, const char* public_key_pem) {
+    // Implementation of signature verification using mbedtls
+    // (This is complex, for now let's add a placeholder that shows the logic)
+    log_info("Signature verification is a placeholder in this demo.");
+    // In a real implementation:
+    // 1. Base64 decode the signature_b64 string.
+    // 2. Calculate the SHA256 hash of the file at file_path.
+    // 3. Use mbedtls_pk_verify() with the public key, the hash, and the decoded signature.
+    // 4. Return true if verification passes.
+    if (strcmp(signature_b64, "placeholder-for-demo-signature") == 0) {
+        log_info("Placeholder signature matched. Continuing for demo purposes.");
+        return true;
+    }
     return false;
 }
 

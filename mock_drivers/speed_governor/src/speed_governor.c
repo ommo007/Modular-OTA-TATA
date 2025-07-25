@@ -1,17 +1,18 @@
 #include "../../esp32_loader_firmware/include/system_api.h"
 #include <stddef.h>
 
-// Module metadata
+// Module metadata - UPDATED VERSION
 static const char* MODULE_NAME = "speed_governor";
-static const char* MODULE_VERSION = "1.0.0";
+static const char* MODULE_VERSION = "1.1.0";  // Updated version
 
 // Global system API pointer
 static SystemAPI* sys_api = NULL;
 
 // Speed governor state
-static int current_speed_limit = 40;  // Default: 40 km/h (problematic limit)
+static int current_speed_limit = 40;  // Default still 40 km/h for city
 static int override_speed_limit = -1; // -1 means no override
 static bool speed_limiting_active = true;
+static int highway_speed_limit = 100; // NEW: Highway speed limit
 
 // Function prototypes for module interface
 static bool initialize_module(SystemAPI* api);
@@ -60,7 +61,14 @@ static bool initialize_module(SystemAPI* api) {
         sys_api->log_printf(LOG_INFO, MODULE_NAME, "Using default speed limit: %d km/h", current_speed_limit);
     }
     
-    sys_api->log_message(LOG_INFO, MODULE_NAME, "Speed Governor module initialized");
+    // Load highway speed limit
+    int saved_highway_limit;
+    if (sys_api->load_module_data("highway_speed_limit", &saved_highway_limit, sizeof(saved_highway_limit))) {
+        highway_speed_limit = saved_highway_limit;
+    }
+    
+    sys_api->log_printf(LOG_INFO, MODULE_NAME, "Speed Governor v%s initialized (highway limit: %d km/h)", 
+                       MODULE_VERSION, highway_speed_limit);
     return true;
 }
 
@@ -68,6 +76,7 @@ static void deinitialize_module(void) {
     if (sys_api) {
         // Save current configuration
         sys_api->save_module_data("speed_limit", &current_speed_limit, sizeof(current_speed_limit));
+        sys_api->save_module_data("highway_speed_limit", &highway_speed_limit, sizeof(highway_speed_limit));
         sys_api->log_message(LOG_INFO, MODULE_NAME, "Speed Governor module deinitialized");
         sys_api = NULL;
     }
@@ -109,21 +118,24 @@ static int get_speed_limit(int current_speed, int road_conditions) {
         return override_speed_limit;
     }
     
-    // This is the problematic logic that will be updated via OTA
-    // Version 1.0.0: Always returns 40 km/h regardless of conditions
-    // This causes the highway problem mentioned in the requirements
+    // FIXED LOGIC - Version 1.1.0: Now properly handles highway conditions
+    // This fixes the TATA EV Nexon highway issue!
     
     if (road_conditions == 0) { // Normal conditions
         sys_api->log_printf(LOG_DEBUG, MODULE_NAME, "Normal conditions, speed limit: %d km/h", current_speed_limit);
-        return current_speed_limit; // Problematic: 40 km/h even on highway
-    } else if (road_conditions == 1) { // Highway conditions
-        // BUG: Should allow higher speeds on highway, but doesn't
-        sys_api->log_printf(LOG_DEBUG, MODULE_NAME, "Highway detected, but limiting to: %d km/h", current_speed_limit);
-        return current_speed_limit; // This will be fixed in v1.1.0
+        return current_speed_limit;
+    } else if (road_conditions == 1) { // Highway conditions - FIXED!
+        // NEW: Allow higher speeds on highway
+        sys_api->log_printf(LOG_INFO, MODULE_NAME, "Highway detected, allowing higher speed: %d km/h", highway_speed_limit);
+        return highway_speed_limit; // This fixes the 40 km/h highway problem!
     } else if (road_conditions == 2) { // City conditions
         int city_limit = current_speed_limit - 10;
         sys_api->log_printf(LOG_DEBUG, MODULE_NAME, "City conditions, speed limit: %d km/h", city_limit);
         return city_limit;
+    } else if (road_conditions == 3) { // School zone
+        int school_limit = 25; // Very low speed in school zones
+        sys_api->log_printf(LOG_INFO, MODULE_NAME, "School zone detected, speed limit: %d km/h", school_limit);
+        return school_limit;
     }
     
     return current_speed_limit;

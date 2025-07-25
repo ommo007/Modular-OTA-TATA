@@ -3,7 +3,7 @@ name: Build and Deploy Module
 on:
   push:
     branches: [ main ]
-    paths: 
+    paths:
       - 'mock_drivers/**'
   workflow_dispatch:
 
@@ -12,157 +12,122 @@ env:
   SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
 
 jobs:
-  detect-and-build:
+  build_and_deploy_modules:
     runs-on: ubuntu-latest
-    outputs:
-      changed_modules: ${{ steps.detect_changes.outputs.modules }}
-    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Find changed modules
+      id: changed_modules
+      uses: tj-actions/changed-files@v41
       with:
-        fetch-depth: 2
-
-    - name: Detect changed modules
-      id: detect_changes
-      run: |
-        # Get changed files in mock_drivers directory
-        CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '^mock_drivers/' || echo "")
-        
-        if [ -z "$CHANGED_FILES" ]; then
-          echo "No changes in mock_drivers directory"
-          echo "modules=[]" >> $GITHUB_OUTPUT
-          exit 0
-        fi
-        
-        # Extract unique module directories
-        MODULES=$(echo "$CHANGED_FILES" | cut -d'/' -f2 | sort -u | jq -R -s -c 'split("\n")[:-1]')
-        echo "Changed modules: $MODULES"
-        echo "modules=$MODULES" >> $GITHUB_OUTPUT
-
-  build-modules:
-    needs: detect-and-build
-    if: ${{ needs.detect-and-build.outputs.changed_modules != '[]' }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        module: ${{ fromJson(needs.detect-and-build.outputs.changed_modules) }}
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+        files: mock_drivers/**
 
     - name: Setup ESP-IDF
+      if: steps.changed_modules.outputs.any_changed == 'true'
       uses: espressif/esp-idf-ci-action@v1
       with:
         esp_idf_version: v5.1.2
         target: esp32
 
-    - name: Install build dependencies
+    - name: Build and Deploy Each Changed Module
+      if: steps.changed_modules.outputs.any_changed == 'true'
+      env:
+        # For the security signing step, you would create these secrets in GitHub
+        #SIGNING_PRIVATE_KEY: ${{ secrets.SIGNING_PRIVATE_KEY }}
+        CHANGED_FILES: ${{ steps.changed_modules.outputs.all_changed_files }}
       run: |
-        sudo apt-get update
-        sudo apt-get install -y jq curl
+        # Use a script to handle the logic for each changed module
+        # This is cleaner than a complex matrix strategy for this use case
+        # Create the script
+        cat > deploy_script.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        # Create an array of unique module directories that have changed
+        declare -A modules_to_build
+        for file in $CHANGED_FILES; do
+          if [[ $file == mock_drivers/* ]]; then
+            module_name=$(echo "$file" | cut -d'/' -f2)
+            modules_to_build["$module_name"]=1
+          fi
+        done
 
-    - name: Build module
-      working-directory: mock_drivers/${{ matrix.module }}
-      run: |
-        echo "Building module: ${{ matrix.module }}"
-        make clean
-        make build
-        
-        # Verify build output
-        if [ ! -f "build/${{ matrix.module }}.bin" ]; then
-          echo "Build failed: binary not found"
-          exit 1
+        if [ ${#modules_to_build[@]} -eq 0 ]; then
+            echo "No changes in mock_drivers to process."
+            exit 0
         fi
 
-    - name: Create module metadata
-      working-directory: mock_drivers/${{ matrix.module }}
-      run: |
-        # Generate version (using run number + short commit hash)
-        VERSION="1.0.${{ github.run_number }}-$(git rev-parse --short HEAD)"
-        
-        # Calculate SHA256 hash
-        HASH=$(sha256sum build/${{ matrix.module }}.bin | cut -d' ' -f1)
-        
-        # Get file size
-        SIZE=$(stat -c%s "build/${{ matrix.module }}.bin")
-        
-        # Create metadata.json
-        cat > build/metadata.json << EOF
-        {
-          "module_name": "${{ matrix.module }}",
-          "version": "$VERSION",
-          "sha256": "$HASH",
-          "size": $SIZE,
-          "build_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-          "commit_hash": "$(git rev-parse HEAD)",
-          "priority": "normal"
-        }
-        EOF
-        
-        echo "Created metadata for ${{ matrix.module }} v$VERSION"
-        cat build/metadata.json
+        echo "Modules to process: ${!modules_to_build[@]}"
+        MANIFEST_UPDATES=""
 
-    - name: Setup Supabase CLI
-      run: |
-        npm install -g @supabase/cli@latest
+        for module in "${!modules_to_build[@]}"; do
+            echo "--- Processing module: $module ---"
+            cd "mock_drivers/$module"
 
-    - name: Upload to Supabase Storage
-      working-directory: mock_drivers/${{ matrix.module }}
-      run: |
-        # Read metadata
-        VERSION=$(jq -r '.version' build/metadata.json)
-        
-        # Upload binary and metadata to versioned path
-        curl -X POST \
-          "$SUPABASE_URL/storage/v1/object/ota-modules/${{ matrix.module }}/$VERSION/${{ matrix.module }}.bin" \
-          -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
-          -H "Content-Type: application/octet-stream" \
-          --data-binary @build/${{ matrix.module }}.bin
-        
-        curl -X POST \
-          "$SUPABASE_URL/storage/v1/object/ota-modules/${{ matrix.module }}/$VERSION/metadata.json" \
-          -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
-          -H "Content-Type: application/json" \
-          --data-binary @build/metadata.json
-        
-        # Also upload to latest path for easy access
-        curl -X POST \
-          "$SUPABASE_URL/storage/v1/object/ota-modules/${{ matrix.module }}/latest/${{ matrix.module }}.bin" \
-          -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
-          -H "Content-Type: application/octet-stream" \
-          --data-binary @build/${{ matrix.module }}.bin
-        
-        curl -X POST \
-          "$SUPABASE_URL/storage/v1/object/ota-modules/${{ matrix.module }}/latest/metadata.json" \
-          -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
-          -H "Content-Type: application/json" \
-          --data-binary @build/metadata.json
+            # 1. Build module
+            make clean && make build
+            if [ ! -f "build/$module.bin" ]; then
+                echo "Build failed: binary not found for $module"
+                exit 1
+            fi
 
-    - name: Update manifest
-      run: |
-        # Download current manifest
+            # 2. Package metadata
+            VERSION="1.1.${{ github.run_number }}"
+            HASH=$(sha256sum "build/$module.bin" | cut -d' ' -f1)
+            # --- SECURITY ENHANCEMENT (SIGNING) ---
+            # To enable, uncomment the next 3 lines and add the SIGNING_PRIVATE_KEY secret
+            # echo "$SIGNING_PRIVATE_KEY" > private_key.pem
+            # SIGNATURE=$(echo -n "$HASH" | openssl dgst -sha256 -sign private_key.pem | base64 -w 0)
+            # rm private_key.pem
+            SIGNATURE="placeholder-for-demo-signature" # Placeholder
+
+            jq -n \
+              --arg name "$module" \
+              --arg ver "$VERSION" \
+              --arg hash "$HASH" \
+              --arg sig "$SIGNATURE" \
+              '{module_name: $name, version: $ver, sha256: $hash, signature: $sig}' \
+              > build/metadata.json
+            cat build/metadata.json
+
+            # 3. Upload to Supabase
+            curl -f -X POST \
+              "$SUPABASE_URL/storage/v1/object/ota-modules/$module/latest/$module.bin" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"build/$module.bin"
+
+            curl -f -X POST \
+              "$SUPABASE_URL/storage/v1/object/ota-modules/$module/latest/metadata.json" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+              -H "Content-Type: application/json" \
+              --data-binary @build/metadata.json
+
+            # 4. Prepare manifest update
+            MANIFEST_UPDATES+=$(jq -n --arg module "$module" --arg ver "$VERSION" \
+              '.[$module] = {latest_version: $ver, path: ("/" + $module + "/")}')
+            cd ../..
+        done
+
+        # 5. Update master manifest
+        echo "--- Updating master manifest ---"
         curl -o manifest.json \
           "$SUPABASE_URL/storage/v1/object/ota-modules/manifest.json" \
           -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" || echo "{}" > manifest.json
-        
-        # Read version from metadata
-        VERSION=$(jq -r '.version' mock_drivers/${{ matrix.module }}/build/metadata.json)
-        
-        # Update manifest
-        jq --arg module "${{ matrix.module }}" --arg version "$VERSION" \
-          '.[$module] = {
-            "latest_version": $version,
-            "path": "/" + $module + "/",
-            "last_updated": (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
-          }' manifest.json > manifest_updated.json
-        
-        # Upload updated manifest
-        curl -X POST \
+
+        UPDATED_MANIFEST=$(echo "$MANIFEST_UPDATES" | jq -s 'add' | jq -s '.[0] * .[1]' manifest.json -)
+        echo "$UPDATED_MANIFEST" > manifest_updated.json
+        cat manifest_updated.json
+
+        curl -f -X POST \
           "$SUPABASE_URL/storage/v1/object/ota-modules/manifest.json" \
           -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
           -H "Content-Type: application/json" \
           --data-binary @manifest_updated.json
-        
-        echo "Updated manifest with ${{ matrix.module }} v$VERSION" 
+
+        echo "Manifest updated successfully."
+        EOF
+
+        # Run the script
+        bash deploy_script.sh 
