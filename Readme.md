@@ -269,13 +269,6 @@ The system logs comprehensive information:
 [INFO] speed_governor: Highway detected, allowing higher speed: 100 km/h
 ```
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/new-module`)
-3. Commit your changes (`git commit -am 'Add new sensor module'`)
-4. Push to the branch (`git push origin feature/new-module`)
-5. Create a Pull Request
 
 ### Adding New Modules
 
@@ -285,25 +278,5 @@ The system logs comprehensive information:
 4. Update CI/CD workflow if needed
 5. Test thoroughly
 
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **TATA Motors** for the real-world automotive OTA inspiration
-- **Espressif Systems** for the ESP32 platform
-- **Supabase** for the excellent backend-as-a-service platform
-- **PlatformIO** for the development environment
-
-## 📞 Support
-
-For questions and support:
-
-- 📧 Create an issue in this repository
-- 💬 Join our [Discussions](https://github.com/your-repo/discussions)
-- 📖 Check the [Wiki](https://github.com/your-repo/wiki) for advanced topics
-
----
 
 **⚠️ Disclaimer**: This is a demonstration project for educational purposes. Real automotive OTA systems require significantly more security, testing, and safety measures.
