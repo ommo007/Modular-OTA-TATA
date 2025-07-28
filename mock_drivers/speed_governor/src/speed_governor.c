@@ -9,7 +9,7 @@
 static SystemAPI* sys_api = NULL;
 
 // Speed governor state
-static int current_speed_limit = 80;  // Default still 40 km/h for city
+static int current_speed_limit = 40;  // Default still 40 km/h for city
 static int override_speed_limit = -1; // -1 means no override
 static bool speed_limiting_active = true;
 static int highway_speed_limit = 100; // NEW: Highway speed limit
