@@ -97,12 +97,26 @@ Before starting, ensure you have:
 
 1. Go to your forked repository on GitHub
 2. Click **Settings** → **Secrets and variables** → **Actions**
+
+### Generate Signing Keys
+
+Before adding secrets, you need to generate a private/public key pair for code signing:
+
+```bash
+# Generate a private key for signing
+openssl ecparam -name prime256v1 -genkey -noout -out private_key.pem
+
+# Extract the public key to be embedded in the firmware
+openssl ec -in private_key.pem -pubout -out public_key.pem
+```
+
 3. Click **"New repository secret"** and add:
 
    | Secret Name | Value |
    |-------------|--------|
    | `SUPABASE_URL` | Your Supabase Project URL |
    | `SUPABASE_SERVICE_KEY` | Your Supabase Service Role Key |
+   | `SIGNING_PRIVATE_KEY` | The entire content of the `private_key.pem` file |
 
 ### Upload Initial Manifest
 
@@ -182,7 +196,16 @@ ESP32 DevKit          Components
    #define WIFI_PASSWORD "Your_WiFi_Password"
    #define SERVER_URL "https://xxxxxxxxxxx.supabase.co"
    #define DEVICE_ID "esp32-demo-001" // Unique device ID
+   
+   // Replace the placeholder with your generated public key
+   #define SIGNING_PUBLIC_KEY \
+   "-----BEGIN PUBLIC KEY-----\n" \
+   "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...\n" \
+   "...paste your entire public_key.pem content here...\n" \
+   "-----END PUBLIC KEY-----"
    ```
+
+   **Important**: Open your generated `public_key.pem` file and copy its entire content (including the BEGIN/END lines) into the `SIGNING_PUBLIC_KEY` definition above, maintaining the proper C string formatting with `\n` line endings.
 
 4. **Verify pin assignments** match your wiring:
    ```cpp
@@ -253,10 +276,9 @@ System initialization complete
    - Check logs for build success
 
 4. **Observe ESP32 behavior**:
-   - Within 30 seconds, yellow LED should light up
-   - Press button to simulate vehicle idle
-   - System should download and apply update
-   - Green LED indicates success, red indicates failure
+   - Within 30 seconds, the yellow LED should begin to blink slowly (once per second)
+   - Press the button to simulate vehicle idle. The yellow LED will start to blink quickly as the download begins
+   - The solid green LED for 5 seconds indicates a successful update. The solid red LED for 8 seconds indicates a failure
 
 ## Step 7: Monitoring and Debugging
 

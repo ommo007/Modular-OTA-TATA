@@ -32,6 +32,11 @@ All notable changes to the Modular OTA System will be documented in this file.
 - **Green LED**: Solid for 5 seconds = Update success celebration
 - **Red LED**: Solid for 8 seconds = Update failure notification
 
+#### 🚀 **Hardened CI/CD & Deployment Pipeline**
+- **IMPLEMENTED**: Intelligent semantic versioning directly in the deployment script
+- **FIXED**: Cloud storage conflicts by using Supabase's x-upsert functionality for atomic updates
+- **ENHANCED**: Error handling to provide clear, actionable build logs on failure
+
 #### 🔧 **Code Quality & Architecture**
 - **SIMPLIFIED**: Download process now only fetches binary (removed metadata.json dependency)
 - **ENHANCED**: Error handling with detailed logging for debugging

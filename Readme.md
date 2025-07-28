@@ -1,4 +1,4 @@
-# Modular OTA System for ESP32
+# Automotive-Grade Modular OTA Update System for ESP32
 
 A complete demonstration of a real-world automotive Over-The-Air (OTA) update system using ESP32, showcasing modular driver updates with CI/CD integration.
 
@@ -63,7 +63,15 @@ strncpy(update->sha256_hash, manifest_hash, sizeof(update->sha256_hash));
 
 This project simulates the TATA EV Nexon speed governor issue where drivers couldn't exceed 40 km/h on highways. Our modular OTA system demonstrates how such critical issues can be fixed through remote updates without requiring physical vehicle access.
 
-### Key Features
+## 🚀 Key Features
+
+- **Secure by Design**: Updates are verified using SHA-256 hashes from an authoritative manifest, with a framework for cryptographic signatures
+- **Robust CI/CD Pipeline**: Fully automated builds, versioning, and cloud deployment using GitHub Actions
+- **Intelligent Cloud Versioning**: The deployment script automatically calculates and assigns semantic versions based on cloud artifacts
+- **Polished User Experience**: Professional, story-driven serial logging and advanced LED feedback patterns for clear status indication
+- **Optimized for Embedded**: Low memory footprint using StaticJsonDocument and -Os compiler optimizations for a lean, fast binary
+
+### Additional Technical Features
 
 - **True Modular Architecture**: Two independent modules (speed_governor + distance_sensor) updatable separately
 - **Real-time Updates**: ESP32 checks for updates every 30 seconds
@@ -248,8 +256,8 @@ curl -H "Authorization: Bearer YOUR_KEY" YOUR_SUPABASE_URL/storage/v1/object/ota
 ## 🔒 Security Considerations
 
 ### Current Implementation (Production-Ready)
-- ✅ **SECURE Hash Verification**: Uses authoritative manifest.json as single source of truth
-- ✅ **Cryptographic Signature Verification**: Full RSA/mbedtls implementation  
+- ✅ **Authoritative Hash Verification**: The system uses the manifest.json as a single source of truth for SHA-256 hashes, eliminating a key attack vector
+- ✅ **Signature-Ready Framework**: The entire pipeline, from CI/CD to the device, is built to handle cryptographic signatures (currently using a placeholder for the demo)
 - ✅ **Memory-Optimized JSON Parsing**: StaticJsonDocument for better stability
 - ✅ **Metadata Validation**: Robust JSON parsing with comprehensive error handling
 - ✅ **Safe Update States**: Vehicle idle detection + automatic rollback support
