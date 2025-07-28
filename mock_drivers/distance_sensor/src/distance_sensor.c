@@ -3,7 +3,7 @@
 
 // Module metadata - Version 1.0.0
 #define MODULE_NAME "distance_sensor"
-#define MODULE_VERSION "1.0.0"  // Version 1.0.0 - outputs in centimeters
+#define MODULE_VERSION "1.0.1"  // Version 1.0.0 - outputs in centimeters
 
 // Global system API pointer
 static SystemAPI* sys_api = NULL;
