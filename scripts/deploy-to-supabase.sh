@@ -310,8 +310,8 @@ EOF
     # Return to project root
     cd "$PROJECT_ROOT"
     
-    # Return version for manifest update
-    echo "$VERSION"
+    # Return full metadata for manifest update (format: module_name:version:hash:size)
+    echo "$module_name:$VERSION:$HASH:$SIZE"
 }
 
 # Function to update manifest
@@ -330,12 +330,20 @@ update_manifest() {
     
     # Update manifest with new versions
     for module_data in "${modules[@]}"; do
-        IFS=':' read -r module_name version <<< "$module_data"
+        # Parse the new metadata format: module_name:version:hash:size
+        IFS=':' read -r module_name version hash size <<< "$module_data"
         
-        # Use jq to update manifest
-        jq --arg module "$module_name" --arg version "$version" \
+        echo -e "${BLUE}📝 Updating manifest entry for $module_name v$version${NC}"
+        
+        # Use jq to update manifest with complete metadata
+        jq --arg module "$module_name" \
+           --arg version "$version" \
+           --arg sha256 "$hash" \
+           --argjson size "$size" \
            '.[$module] = {
              "latest_version": $version,
+             "sha256": $sha256,
+             "file_size": $size,
              "path": "/" + $module + "/",
              "last_updated": (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
              "description": "Updated via deployment script",
@@ -412,8 +420,9 @@ main() {
     
     # Deploy each module
     for module_name in "${modules_to_deploy[@]}"; do
-        if version=$(deploy_module "$module_name"); then
-            deployed_modules+=("$module_name:$version")
+        # Execute deploy_module and capture full metadata string (name:version:hash:size)
+        if module_metadata=$(deploy_module "$module_name"); then
+            deployed_modules+=("$module_metadata")
         else
             echo -e "${RED}❌ Failed to deploy module: $module_name${NC}"
             exit 1
