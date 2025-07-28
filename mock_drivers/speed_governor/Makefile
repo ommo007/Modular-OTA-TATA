@@ -1,4 +1,5 @@
-# Makefile for Speed Governor Module v1.1.0
+# Makefile for Speed Governor Module v2 (Updated)
+# Compiles C code into a raw binary for ESP32 dynamic loading
 
 TOOLCHAIN_PREFIX ?= xtensa-esp32-elf-
 CC = $(TOOLCHAIN_PREFIX)gcc
@@ -10,8 +11,10 @@ SRC_DIR = src
 BUILD_DIR = build
 ENTRY_POINT_FUNC = get_module_interface
 
+# Use linker script to place entry point at the beginning
 LDSCRIPT = esp32_module.ld
 
+# Source files
 SOURCES = $(wildcard $(SRC_DIR)/*.c)
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 
@@ -23,9 +26,9 @@ LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT)
 
 all: $(BUILD_DIR)/$(MODULE_NAME).bin
 
-# Generate linker script
+# Create build directory and linker script
 $(BUILD_DIR)/$(LDSCRIPT):
-	@mkdir -p $(BUILD_DIR)
+	mkdir -p $(BUILD_DIR)
 	@echo "ENTRY($(ENTRY_POINT_FUNC))" > $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "SECTIONS" >> $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "{" >> $(BUILD_DIR)/$(LDSCRIPT)
@@ -33,24 +36,20 @@ $(BUILD_DIR)/$(LDSCRIPT):
 	@echo "  .rodata : { *(.rodata) }" >> $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "}" >> $(BUILD_DIR)/$(LDSCRIPT)
 
-# Compile source files
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
-	@mkdir -p $(BUILD_DIR)
+	mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Link objects into ELF
 $(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT)
-	$(CC) $(LDFLAGS) $(OBJECTS) -lgcc -lm -o $@
+	$(CC) $(LDFLAGS) $(OBJECTS) -o $@
 	$(SIZE) $@
 
-# Convert ELF to raw binary
 $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf
 	$(OBJCOPY) -O binary $< $@
-	@echo "✅ Binary created: $@"
-	@echo "📦 Version: Speed Governor v1.1.0"
+	@echo "Binary size: $$(stat -c%s $@) bytes"
+	@echo "VERSION: This is the updated v1.1.0 that fixes highway speed limit issue"
 
-# Convenience targets
-build: all
+build: $(BUILD_DIR)/$(MODULE_NAME).bin
 
 clean:
 	rm -rf $(BUILD_DIR)
