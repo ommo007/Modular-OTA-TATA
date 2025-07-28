@@ -129,7 +129,7 @@ update_status_t ota_updater_download_and_apply_update(OTAUpdater* updater, const
         return UPDATE_DOWNLOAD_FAILED;
     }
     
-    // Verify hash
+    // STEP 1: Calculate the hash of the downloaded binary file. This is unchanged.
     char calculated_hash[65];
     if (!calculate_sha256(temp_binary_path.c_str(), calculated_hash)) {
         log_error("Failed to calculate hash");
@@ -137,38 +137,41 @@ update_status_t ota_updater_download_and_apply_update(OTAUpdater* updater, const
         LittleFS.remove(temp_binary_path);
         return UPDATE_VERIFICATION_FAILED;
     }
-    
-    if (strcmp(calculated_hash, update_info->sha256_hash) != 0) {
-        Serial.printf("Hash mismatch! Expected: %s, Got: %s\n", 
-                     update_info->sha256_hash, calculated_hash);
-        LittleFS.remove(metadata_path);
-        LittleFS.remove(temp_binary_path);
-        return UPDATE_VERIFICATION_FAILED;
-    }
-    
-    // --- NEW SECURITY STEP ---
-    // Parse signature from metadata.json
-    // First, read and parse the metadata file
+
+    // STEP 2: Open and parse the metadata.json file to get the real verification data.
     File metadata_file = LittleFS.open(metadata_path, "r");
     if (!metadata_file) {
-        log_error("Failed to open metadata file for signature verification");
+        log_error("Failed to open metadata file for verification");
         LittleFS.remove(temp_binary_path);
         return UPDATE_VERIFICATION_FAILED;
     }
-    
+
     DynamicJsonDocument metadata_doc(1024);
     DeserializationError error = deserializeJson(metadata_doc, metadata_file);
-    metadata_file.close();
-    
+    metadata_file.close(); // Close the file immediately after reading
+
     if (error) {
-        log_error("Failed to parse metadata JSON for signature");
+        log_error("Failed to parse metadata JSON for verification");
         LittleFS.remove(metadata_path);
         LittleFS.remove(temp_binary_path);
         return UPDATE_VERIFICATION_FAILED;
     }
-    
-    // Extract signature from metadata
+
+    // STEP 3: Extract the expected hash and signature from the parsed JSON.
+    const char* expected_hash = metadata_doc["sha256"] | "missing";
     const char* signature = metadata_doc["signature"] | "missing";
+
+    // STEP 4: Perform the hash verification using the CORRECT hash.
+    if (strcmp(calculated_hash, expected_hash) != 0) {
+        Serial.printf("Hash mismatch! Expected: %s, Got: %s\n",
+                     expected_hash, calculated_hash);
+        LittleFS.remove(metadata_path);
+        LittleFS.remove(temp_binary_path);
+        return UPDATE_VERIFICATION_FAILED;
+    }
+    log_info("Hash verification passed.");
+
+    // STEP 5: Perform the signature verification using the CORRECT signature.
     if (strcmp(signature, "missing") == 0) {
         log_error("Signature missing from metadata");
         LittleFS.remove(metadata_path);

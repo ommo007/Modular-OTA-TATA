@@ -36,14 +36,16 @@ echo -e "${BLUE}🚀 Deploying OTA Modules to Supabase${NC}"
 echo "Project: $SUPABASE_URL"
 echo ""
 
-# Function to upload file to Supabase
+# Function to upload file to Supabase with conflict handling
 upload_file() {
     local local_path="$1"
     local remote_path="$2"
     local content_type="$3"
+    local allow_overwrite="${4:-false}"
     
     echo -e "${YELLOW}📤 Uploading: $local_path → $remote_path${NC}"
     
+    # First, try to upload as new file
     response=$(curl -s -w "%{http_code}" \
         -X POST \
         "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
@@ -56,32 +58,61 @@ upload_file() {
     if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
         echo -e "${GREEN}✅ Successfully uploaded $remote_path${NC}"
         return 0
+    elif [ "$http_code" -eq 409 ] && [ "$allow_overwrite" = "true" ]; then
+        # File exists, try to update it instead
+        echo -e "${YELLOW}📝 File exists, attempting to update...${NC}"
+        
+        response=$(curl -s -w "%{http_code}" \
+            -X PUT \
+            "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: $content_type" \
+            --data-binary "@$local_path")
+        
+        http_code="${response: -3}"
+        
+        if [ "$http_code" -eq 200 ]; then
+            echo -e "${GREEN}✅ Successfully updated $remote_path${NC}"
+            return 0
+        else
+            echo -e "${RED}❌ Failed to update $remote_path (HTTP $http_code)${NC}"
+            return 1
+        fi
+    elif [ "$http_code" -eq 409 ]; then
+        echo -e "${YELLOW}⚠️  File already exists: $remote_path (skipping to avoid conflicts)${NC}"
+        return 0
     else
         echo -e "${RED}❌ Failed to upload $remote_path (HTTP $http_code)${NC}"
+        echo "Response: ${response%???}"  # Remove last 3 chars (http code)
         return 1
     fi
 }
 
-# Function to delete existing file (for updates)
-delete_file() {
-    local remote_path="$1"
+# Function to list existing versions of a module
+list_module_versions() {
+    local module_name="$1"
     
-    echo -e "${YELLOW}🗑️  Deleting existing: $remote_path${NC}"
+    echo -e "${BLUE}📋 Checking existing versions for $module_name...${NC}"
     
-    response=$(curl -s -w "%{http_code}" \
-        -X DELETE \
-        "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
+    response=$(curl -s \
+        "$SUPABASE_URL/storage/v1/object/list/ota-modules?prefix=$module_name/" \
         -H "Authorization: Bearer $SUPABASE_SERVICE_KEY")
     
-    http_code="${response: -3}"
-    
-    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 404 ]; then
-        echo -e "${GREEN}✅ Cleared existing file${NC}"
-        return 0
+    if [ $? -eq 0 ]; then
+        # Extract version directories from the response
+        versions=$(echo "$response" | jq -r '.[] | select(.name | test("^[0-9]")) | .name' 2>/dev/null || echo "")
+        if [ -n "$versions" ]; then
+            echo -e "${GREEN}📦 Existing versions found:${NC}"
+            echo "$versions" | while read -r version; do
+                echo "  • $version"
+            done
+        else
+            echo -e "${YELLOW}📦 No existing versions found (this will be the first)${NC}"
+        fi
     else
-        echo -e "${YELLOW}⚠️  Could not delete existing file (HTTP $http_code)${NC}"
-        return 0  # Continue anyway
+        echo -e "${YELLOW}⚠️  Could not check existing versions${NC}"
     fi
+    echo ""
 }
 
 # Function to build and upload module
@@ -95,6 +126,9 @@ deploy_module() {
     fi
     
     echo -e "${BLUE}🔨 Building module: $module_name${NC}"
+    
+    # Check existing versions in cloud
+    list_module_versions "$module_name"
     
     # Build the module
     cd "$module_path"
@@ -110,44 +144,65 @@ deploy_module() {
         return 1
     fi
     
-    # Generate version and metadata
-    VERSION="1.0.$(date +%s)-$(git rev-parse --short HEAD)"
+    # Generate unique version and metadata
+    TIMESTAMP=$(date +%s)
+    SHORT_COMMIT=$(git rev-parse --short HEAD)
+    # Create a more unique version identifier (cross-platform compatible)
+    if command -v md5sum >/dev/null 2>&1; then
+        UNIQUE_ID=$(echo $RANDOM | md5sum | head -c8)
+    elif command -v md5 >/dev/null 2>&1; then
+        UNIQUE_ID=$(echo $RANDOM | md5 | head -c8)
+    else
+        # Fallback for systems without md5
+        UNIQUE_ID=$(printf "%08x" $RANDOM)
+    fi
+    VERSION="1.0.${TIMESTAMP}-${SHORT_COMMIT}-${UNIQUE_ID}"
     HASH=$(sha256sum "$binary_path" | cut -d' ' -f1)
     SIZE=$(stat -c%s "$binary_path")
     BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     COMMIT_HASH=$(git rev-parse HEAD)
     
-    # Create metadata JSON
+    # Create metadata JSON with signature placeholder
     metadata_path="$module_path/build/metadata.json"
     cat > "$metadata_path" << EOF
 {
   "module_name": "$module_name",
   "version": "$VERSION",
   "sha256": "$HASH",
+  "signature": "placeholder-for-demo-signature",
   "size": $SIZE,
   "build_time": "$BUILD_TIME",
   "commit_hash": "$COMMIT_HASH",
-  "priority": "normal"
+  "priority": "normal",
+  "deployment_strategy": "versioned_cloud_storage"
 }
 EOF
     
     echo -e "${GREEN}📝 Created metadata: v$VERSION ($SIZE bytes)${NC}"
     
-    # Upload to versioned path
-    echo -e "${BLUE}📤 Uploading versioned files...${NC}"
-    delete_file "$module_name/$VERSION/$module_name.bin"
-    upload_file "$binary_path" "$module_name/$VERSION/$module_name.bin" "application/octet-stream"
+    # Upload to versioned path (immutable - never overwrite)
+    echo -e "${BLUE}📤 Uploading versioned files (v$VERSION)...${NC}"
+    if ! upload_file "$binary_path" "$module_name/$VERSION/$module_name.bin" "application/octet-stream" "false"; then
+        echo -e "${RED}❌ Failed to upload versioned binary${NC}"
+        return 1
+    fi
     
-    delete_file "$module_name/$VERSION/metadata.json"
-    upload_file "$metadata_path" "$module_name/$VERSION/metadata.json" "application/json"
+    if ! upload_file "$metadata_path" "$module_name/$VERSION/metadata.json" "application/json" "false"; then
+        echo -e "${RED}❌ Failed to upload versioned metadata${NC}"
+        return 1
+    fi
     
-    # Upload to latest path
-    echo -e "${BLUE}📤 Updating latest files...${NC}"
-    delete_file "$module_name/latest/$module_name.bin"
-    upload_file "$binary_path" "$module_name/latest/$module_name.bin" "application/octet-stream"
+    # Upload to latest path (allow overwrite - this is the "current" pointer)
+    echo -e "${BLUE}📤 Updating latest pointers...${NC}"
+    if ! upload_file "$binary_path" "$module_name/latest/$module_name.bin" "application/octet-stream" "true"; then
+        echo -e "${RED}❌ Failed to update latest binary${NC}"
+        return 1
+    fi
     
-    delete_file "$module_name/latest/metadata.json"
-    upload_file "$metadata_path" "$module_name/latest/metadata.json" "application/json"
+    if ! upload_file "$metadata_path" "$module_name/latest/metadata.json" "application/json" "true"; then
+        echo -e "${RED}❌ Failed to update latest metadata${NC}"
+        return 1
+    fi
     
     echo -e "${GREEN}✅ Module $module_name deployed successfully${NC}"
     echo ""
@@ -188,9 +243,11 @@ update_manifest() {
            }' "$manifest_path" > "$manifest_path.tmp" && mv "$manifest_path.tmp" "$manifest_path"
     done
     
-    # Upload updated manifest
-    delete_file "manifest.json"
-    upload_file "$manifest_path" "manifest.json" "application/json"
+    # Upload updated manifest (allow overwrite since this is the central index)
+    if ! upload_file "$manifest_path" "manifest.json" "application/json" "true"; then
+        echo -e "${RED}❌ Failed to update manifest${NC}"
+        return 1
+    fi
     
     # Clean up
     rm -f "$manifest_path"
@@ -248,7 +305,15 @@ main() {
     for module_data in "${deployed_modules[@]}"; do
         IFS=':' read -r module_name version <<< "$module_data"
         echo -e "  • $module_name: $version"
+        echo -e "    📁 Versioned: /$module_name/$version/"
+        echo -e "    🔗 Latest: /$module_name/latest/"
     done
+    echo ""
+    echo -e "${BLUE}📋 Version Control Strategy:${NC}"
+    echo -e "  • Versioned files are immutable (never overwritten)"
+    echo -e "  • Latest symlinks are updated to point to new versions"
+    echo -e "  • Each deployment creates a unique version identifier"
+    echo -e "  • Conflicts are handled gracefully with fallback strategies"
     echo ""
     echo -e "${BLUE}🔗 Supabase Storage: $SUPABASE_URL/dashboard/project/_/storage/buckets/ota-modules${NC}"
 }
