@@ -108,20 +108,25 @@ deploy_module() {
     echo -e "\n${BLUE}--- Processing Module: $module_name ---${NC}"
     cd "$module_path"
 
-    local version=$(get_next_version "$module_name")
-    
-    echo "🔨 Building binary for version $version..."
-    if ! make clean && make build > /dev/null 2>&1; then
+    # --- FIX POINT 1: BUILD FIRST ---
+    # First, we build the binary. This is the most important step.
+    # If this fails, we don't need to do anything else.
+    echo "🔨 Building binary..."
+    # Redirect stdout to /dev/null to keep the log clean, but let stderr show errors
+    if ! make clean && make build > /dev/null; then
         echo -e "${RED}❌ Build failed for $module_name.${NC}" >&2
         return 1
     fi
     local binary_path="build/$module_name.bin"
     echo -e "${GREEN}✅ Build successful.${NC}"
 
+    # --- FIX POINT 2: GET METADATA AFTER BUILD ---
+    # Now that the binary exists, we can safely get its metadata and determine the version.
+    local version=$(get_next_version "$module_name")
     local hash=$(sha256sum "$binary_path" | cut -d' ' -f1)
     local size=$(stat -c%s "$binary_path")
 
-    echo "☁️  Uploading immutable versioned artifact..."
+    echo "☁️  Uploading immutable versioned artifact ($version)..."
     if ! upload_file "$binary_path" "$module_name/$version/$module_name.bin" "application/octet-stream" "false"; then return 1; fi
 
     echo "☁️  Updating mutable 'latest' pointer..."
