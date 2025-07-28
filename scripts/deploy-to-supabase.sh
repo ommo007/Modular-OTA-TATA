@@ -226,11 +226,18 @@ deploy_module() {
         return 1
     fi
     
-    # Generate semantic version based on existing versions in cloud
-    echo -e "${BLUE}🔍 Checking for existing versions in cloud...${NC}"
-    BASE_VERSION="1.1.0"  # Default starting version
-    VERSION=$(generate_next_version "$module_name" "$BASE_VERSION")
-    echo -e "${GREEN}📋 Generated version: $VERSION${NC}"
+    # Generate version number
+    if [ -n "${GITHUB_RUN_NUMBER:-}" ]; then
+        # Use GitHub run number for CI/CD builds
+        VERSION="1.1.${GITHUB_RUN_NUMBER}"
+        echo -e "${GREEN}📋 Using GitHub run number for version: $VERSION${NC}"
+    else
+        # Use semantic versioning based on existing versions in cloud for manual deploys
+        echo -e "${BLUE}🔍 Checking for existing versions in cloud...${NC}"
+        BASE_VERSION="1.1.0"  # Default starting version
+        VERSION=$(generate_next_version "$module_name" "$BASE_VERSION")
+        echo -e "${GREEN}📋 Generated semantic version: $VERSION${NC}"
+    fi
     HASH=$(sha256sum "$binary_path" | cut -d' ' -f1)
     SIZE=$(stat -c%s "$binary_path")
     BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -348,26 +355,52 @@ update_manifest() {
     echo -e "${GREEN}✅ Manifest updated${NC}"
 }
 
-# Main deployment logic
-main() {
+# Function to detect changed modules from environment or arguments
+detect_changed_modules() {
     local modules_to_deploy=()
-    local deployed_modules=()
     
-    # Check if specific modules were requested
+    # Check if specific modules were requested as arguments
     if [ $# -gt 0 ]; then
-        modules_to_deploy=("$@")
-    else
-        # Deploy all modules by default
-        for module_dir in "$PROJECT_ROOT"/mock_drivers/*/; do
-            if [ -d "$module_dir" ]; then
-                module_name=$(basename "$module_dir")
-                # Skip v2 directories (they're updates, not separate modules)
-                if [[ ! "$module_name" =~ _v[0-9]+$ ]]; then
-                    modules_to_deploy+=("$module_name")
-                fi
+        # Convert file paths to module names
+        for file in "$@"; do
+            if [[ $file == mock_drivers/* ]]; then
+                module_name=$(echo "$file" | cut -d'/' -f2)
+                modules_to_deploy+=("$module_name")
             fi
         done
+    else
+        # Check if we have changed files from GitHub Actions environment
+        if [ -n "${GITHUB_ACTIONS:-}" ] && [ -n "${GITHUB_EVENT_PATH:-}" ]; then
+            echo -e "${BLUE}🔍 Detecting changes from GitHub Actions context...${NC}"
+            # In GitHub Actions, we can get changed files from the context
+            # This is a fallback - normally files should be passed as arguments
+        fi
+        
+        # If no specific changes, deploy all modules (fallback behavior)
+        if [ ${#modules_to_deploy[@]} -eq 0 ]; then
+            echo -e "${YELLOW}⚠️  No specific changes detected, scanning all modules...${NC}"
+            for module_dir in "$PROJECT_ROOT"/mock_drivers/*/; do
+                if [ -d "$module_dir" ]; then
+                    module_name=$(basename "$module_dir")
+                    # Skip v2 directories (they're updates, not separate modules)
+                    if [[ ! "$module_name" =~ _v[0-9]+$ ]]; then
+                        modules_to_deploy+=("$module_name")
+                    fi
+                fi
+            done
+        fi
     fi
+    
+    # Remove duplicates
+    printf '%s\n' "${modules_to_deploy[@]}" | sort -u
+}
+
+# Main deployment logic
+main() {
+    local deployed_modules=()
+    
+    # Detect which modules to deploy
+    readarray -t modules_to_deploy < <(detect_changed_modules "$@")
     
     if [ ${#modules_to_deploy[@]} -eq 0 ]; then
         echo -e "${YELLOW}⚠️  No modules found to deploy${NC}"
