@@ -78,7 +78,11 @@ upload_file() {
         success_msg="✅ Successfully updated (overwritten)."
     fi
 
+    # --- CRITICAL FIX IS HERE ---
+    # The '-o /dev/null' option tells curl to discard the response body,
+    # ensuring that only the HTTP status code is captured by the variable.
     local http_code=$(curl -s -w "%{http_code}" \
+        -o /dev/null \
         -X "$method" \
         "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
         -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
@@ -89,8 +93,10 @@ upload_file() {
         echo -e "${GREEN}$success_msg${NC}" >&2
         return 0
     else
+        # If POST failed with 409 (Conflict) and we allow overwrite, try PUT
         if [ "$method" = "POST" ] && [ "$http_code" -eq 409 ] && [ "$allow_overwrite" = "true" ]; then
              echo -e "${YELLOW}📝 File exists. Attempting to overwrite with PUT...${NC}" >&2
+             # Recursively call the function to attempt a PUT
              upload_file "$local_path" "$remote_path" "$content_type" "true"
              return $?
         fi
