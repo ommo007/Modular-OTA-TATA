@@ -61,36 +61,47 @@ get_next_version() {
     echo "$next_version" # This is the actual return value to stdout
 }
 
-# Uploads a file, using the 'x-upsert' header for robust conflict handling.
+# Uploads a file, using the correct Supabase method for each scenario.
 upload_file() {
     local local_path="$1"
     local remote_path="$2"
     local content_type="$3"
     local allow_overwrite="$4"
 
-    # Set the upsert header based on whether we allow overwriting.
-    # 'true' = create or update. 'false' = create only, fail if exists.
-    local upsert_header="x-upsert: false"
-    if [ "$allow_overwrite" = "true" ]; then
-        upsert_header="x-upsert: true"
-    fi
-
     echo -e "${YELLOW}☁️  Uploading:${NC} $local_path -> $remote_path (Overwrite: $allow_overwrite)" >&2
 
-    local http_code=$(curl -s -w "%{http_code}" \
-        -o /dev/null \
-        -X POST \
-        "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
-        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
-        -H "Content-Type: $content_type" \
-        -H "$upsert_header" \
-        --data-binary "@$local_path")
+    local http_code
     
-    # Check for success codes (200 OK or 201 Created)
-    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+    if [ "$allow_overwrite" = "true" ]; then
+        # For 'latest' files: Use POST with x-upsert:true. This will create or update.
+        http_code=$(curl -s -w "%{http_code}" \
+            -o /dev/null \
+            -X POST \
+            "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: $content_type" \
+            -H "x-upsert: true" \
+            --data-binary "@$local_path")
+    else
+        # For versioned files: Use a simple POST. This will only create new files.
+        # If the file exists, it will correctly return a 409 Conflict error.
+        http_code=$(curl -s -w "%{http_code}" \
+            -o /dev/null \
+            -X POST \
+            "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: $content_type" \
+            --data-binary "@$local_path")
+    fi
+    
+    # Check for success (200 OK) or conflict when we expect it
+    if [ "$http_code" -eq 200 ]; then
         echo -e "${GREEN}✅ Upload successful (HTTP $http_code).${NC}" >&2
         return 0
-    else
+    elif [ "$allow_overwrite" = "false" ] && [ "$http_code" -eq 409 ]; then
+        echo -e "${RED}❌ Upload failed: Version already exists (HTTP $http_code).${NC}" >&2
+        return 1
+    elif [ "$http_code" -ne 200 ]; then
         echo -e "${RED}❌ Upload failed for $remote_path (HTTP $http_code).${NC}" >&2
         return 1
     fi
