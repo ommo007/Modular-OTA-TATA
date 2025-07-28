@@ -36,34 +36,68 @@ echo -e "${BLUE}🚀 Deploying OTA Modules to Supabase${NC}"
 echo "Project: $SUPABASE_URL"
 echo ""
 
-# Function to upload file to Supabase with conflict handling
+# Function to get existing versions from Supabase
+get_existing_versions() {
+    local module_name="$1"
+    
+    response=$(curl -s \
+        "$SUPABASE_URL/storage/v1/object/list/ota-modules?prefix=$module_name/" \
+        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY")
+    
+    if [ $? -eq 0 ]; then
+        # Extract version directories from the response and sort them
+        echo "$response" | jq -r '.[] | select(.name | test("^[0-9]")) | .name' 2>/dev/null | sort -V || echo ""
+    else
+        echo ""
+    fi
+}
+
+# Function to generate next available version
+generate_next_version() {
+    local module_name="$1"
+    local base_version="$2"  # e.g., "1.1.0"
+    
+    # Get existing versions
+    existing_versions=$(get_existing_versions "$module_name")
+    
+    if [ -z "$existing_versions" ]; then
+        # No existing versions, use base version
+        echo "$base_version"
+        return 0
+    fi
+    
+    # Find the highest patch version for this major.minor
+    IFS='.' read -r major minor patch <<< "$base_version"
+    highest_patch=$patch
+    
+    while IFS= read -r version; do
+        if [[ "$version" =~ ^$major\.$minor\.([0-9]+) ]]; then
+            current_patch="${BASH_REMATCH[1]}"
+            if [ "$current_patch" -ge "$highest_patch" ]; then
+                highest_patch=$((current_patch + 1))
+            fi
+        fi
+    done <<< "$existing_versions"
+    
+    echo "$major.$minor.$highest_patch"
+}
+
+# Function to upload file to Supabase with conflict handling and auto-versioning
 upload_file() {
     local local_path="$1"
     local remote_path="$2"
     local content_type="$3"
     local allow_overwrite="${4:-false}"
+    local module_name="${5:-}"
+    local max_retries=3
+    local retry_count=0
     
     echo -e "${YELLOW}📤 Uploading: $local_path → $remote_path${NC}"
     
-    # First, try to upload as new file
-    response=$(curl -s -w "%{http_code}" \
-        -X POST \
-        "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
-        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
-        -H "Content-Type: $content_type" \
-        --data-binary "@$local_path")
-    
-    http_code="${response: -3}"
-    
-    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
-        echo -e "${GREEN}✅ Successfully uploaded $remote_path${NC}"
-        return 0
-    elif [ "$http_code" -eq 409 ] && [ "$allow_overwrite" = "true" ]; then
-        # File exists, try to update it instead
-        echo -e "${YELLOW}📝 File exists, attempting to update...${NC}"
-        
+    while [ $retry_count -lt $max_retries ]; do
+        # Try to upload as new file
         response=$(curl -s -w "%{http_code}" \
-            -X PUT \
+            -X POST \
             "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
             -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
             -H "Content-Type: $content_type" \
@@ -71,21 +105,69 @@ upload_file() {
         
         http_code="${response: -3}"
         
-        if [ "$http_code" -eq 200 ]; then
-            echo -e "${GREEN}✅ Successfully updated $remote_path${NC}"
+        if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+            echo -e "${GREEN}✅ Successfully uploaded $remote_path${NC}"
             return 0
+        elif [ "$http_code" -eq 409 ] && [ "$allow_overwrite" = "true" ]; then
+            # File exists, try to update it instead
+            echo -e "${YELLOW}📝 File exists, attempting to update...${NC}"
+            
+            response=$(curl -s -w "%{http_code}" \
+                -X PUT \
+                "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
+                -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+                -H "Content-Type: $content_type" \
+                --data-binary "@$local_path")
+            
+            http_code="${response: -3}"
+            
+            if [ "$http_code" -eq 200 ]; then
+                echo -e "${GREEN}✅ Successfully updated $remote_path${NC}"
+                return 0
+            else
+                echo -e "${RED}❌ Failed to update $remote_path (HTTP $http_code)${NC}"
+                return 1
+            fi
+        elif [ "$http_code" -eq 409 ] || [ "$http_code" -eq 400 ]; then
+            # File conflict or bad request - likely version already exists
+            echo -e "${YELLOW}⚠️  Conflict detected (HTTP $http_code): $remote_path${NC}"
+            
+            # If this is a versioned upload and we have module name, try to create new version
+            if [ -n "$module_name" ] && [[ "$remote_path" == *"/$module_name/"* ]]; then
+                retry_count=$((retry_count + 1))
+                echo -e "${YELLOW}🔄 Attempt $retry_count: Creating new version to avoid conflict...${NC}"
+                
+                # Extract current version from path and increment it
+                if [[ "$remote_path" =~ $module_name/([0-9]+\.[0-9]+\.[0-9]+)/ ]]; then
+                    current_version="${BASH_REMATCH[1]}"
+                    new_version=$(generate_next_version "$module_name" "$current_version")
+                    new_remote_path=$(echo "$remote_path" | sed "s|$module_name/$current_version/|$module_name/$new_version/|")
+                    
+                    echo -e "${BLUE}🆕 Trying new version: $current_version → $new_version${NC}"
+                    remote_path="$new_remote_path"
+                    
+                    # Update the global VERSION variable for this deployment
+                    VERSION="$new_version"
+                    continue
+                fi
+            fi
+            
+            if [ "$allow_overwrite" = "false" ]; then
+                echo -e "${YELLOW}⚠️  File already exists: $remote_path (skipping to avoid conflicts)${NC}"
+                return 0
+            else
+                echo -e "${RED}❌ Upload failed after $retry_count attempts${NC}"
+                return 1
+            fi
         else
-            echo -e "${RED}❌ Failed to update $remote_path (HTTP $http_code)${NC}"
+            echo -e "${RED}❌ Failed to upload $remote_path (HTTP $http_code)${NC}"
+            echo "Response: ${response%???}"  # Remove last 3 chars (http code)
             return 1
         fi
-    elif [ "$http_code" -eq 409 ]; then
-        echo -e "${YELLOW}⚠️  File already exists: $remote_path (skipping to avoid conflicts)${NC}"
-        return 0
-    else
-        echo -e "${RED}❌ Failed to upload $remote_path (HTTP $http_code)${NC}"
-        echo "Response: ${response%???}"  # Remove last 3 chars (http code)
-        return 1
-    fi
+    done
+    
+    echo -e "${RED}❌ Failed to upload after $max_retries attempts${NC}"
+    return 1
 }
 
 # Function to list existing versions of a module
@@ -144,19 +226,11 @@ deploy_module() {
         return 1
     fi
     
-    # Generate unique version and metadata
-    TIMESTAMP=$(date +%s)
-    SHORT_COMMIT=$(git rev-parse --short HEAD)
-    # Create a more unique version identifier (cross-platform compatible)
-    if command -v md5sum >/dev/null 2>&1; then
-        UNIQUE_ID=$(echo $RANDOM | md5sum | head -c8)
-    elif command -v md5 >/dev/null 2>&1; then
-        UNIQUE_ID=$(echo $RANDOM | md5 | head -c8)
-    else
-        # Fallback for systems without md5
-        UNIQUE_ID=$(printf "%08x" $RANDOM)
-    fi
-    VERSION="1.0.${TIMESTAMP}-${SHORT_COMMIT}-${UNIQUE_ID}"
+    # Generate semantic version based on existing versions in cloud
+    echo -e "${BLUE}🔍 Checking for existing versions in cloud...${NC}"
+    BASE_VERSION="1.1.0"  # Default starting version
+    VERSION=$(generate_next_version "$module_name" "$BASE_VERSION")
+    echo -e "${GREEN}📋 Generated version: $VERSION${NC}"
     HASH=$(sha256sum "$binary_path" | cut -d' ' -f1)
     SIZE=$(stat -c%s "$binary_path")
     BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -180,14 +254,33 @@ EOF
     
     echo -e "${GREEN}📝 Created metadata: v$VERSION ($SIZE bytes)${NC}"
     
-    # Upload to versioned path (immutable - never overwrite)
+    # Upload to versioned path (immutable - auto-version on conflict)
     echo -e "${BLUE}📤 Uploading versioned files (v$VERSION)...${NC}"
-    if ! upload_file "$binary_path" "$module_name/$VERSION/$module_name.bin" "application/octet-stream" "false"; then
+    ORIGINAL_VERSION="$VERSION"
+    if ! upload_file "$binary_path" "$module_name/$VERSION/$module_name.bin" "application/octet-stream" "false" "$module_name"; then
         echo -e "${RED}❌ Failed to upload versioned binary${NC}"
         return 1
     fi
     
-    if ! upload_file "$metadata_path" "$module_name/$VERSION/metadata.json" "application/json" "false"; then
+    # If version was updated during upload, recreate metadata with correct version
+    if [ "$VERSION" != "$ORIGINAL_VERSION" ]; then
+        echo -e "${YELLOW}📝 Version was updated to $VERSION, recreating metadata...${NC}"
+        cat > "$metadata_path" << EOF
+{
+  "module_name": "$module_name",
+  "version": "$VERSION",
+  "sha256": "$HASH",
+  "signature": "placeholder-for-demo-signature",
+  "size": $SIZE,
+  "build_time": "$BUILD_TIME",
+  "commit_hash": "$COMMIT_HASH",
+  "priority": "normal",
+  "deployment_strategy": "versioned_cloud_storage"
+}
+EOF
+    fi
+    
+    if ! upload_file "$metadata_path" "$module_name/$VERSION/metadata.json" "application/json" "false" "$module_name"; then
         echo -e "${RED}❌ Failed to upload versioned metadata${NC}"
         return 1
     fi
