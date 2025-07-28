@@ -22,7 +22,7 @@ CFLAGS = -Os -mlongcalls -ffunction-sections -fdata-sections \
          -fPIC -nostdlib -std=c99 -Wall \
          -I../../esp32_loader_firmware/include
 
-LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT)
+LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT) -lgcc -lm
 
 all: $(BUILD_DIR)/$(MODULE_NAME).bin
 
