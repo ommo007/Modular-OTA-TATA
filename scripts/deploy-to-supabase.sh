@@ -96,7 +96,7 @@ deploy_module() {
     cd "$module_path"
 
     echo "🔨 Building binary..." >&2
-    if ! make clean && make build > /dev/null 2>&1; then echo -e "${RED}❌ Build failed.${NC}" >&2; return 1; fi
+    if ! make clean && make build; then echo -e "${RED}❌ Build failed.${NC}" >&2; return 1; fi
     local binary_path="build/$module_name.bin"
     if [ ! -f "$binary_path" ]; then echo -e "${RED}❌ Binary not found after build.${NC}" >&2; return 1; fi
     echo -e "${GREEN}✅ Build successful.${NC}" >&2
