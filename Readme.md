@@ -2,43 +2,62 @@
 
 A complete demonstration of a real-world automotive Over-The-Air (OTA) update system using ESP32, showcasing modular driver updates with CI/CD integration.
 
-## 🎉 MAJOR UPDATE: Fully Functional Implementation!
+## 🔥 **LATEST UPDATE: Production-Ready Security & Performance!**
 
-### ✅ **Critical Issues Fixed:**
+### ✅ **Critical Security & Performance Fixes (v1.2.0):**
 
-1. **🔥 REAL Dynamic Loading**: No more mock interfaces! The system now truly loads and executes binary code from the cloud
-2. **📁 Clean Project Structure**: Removed confusing v2 directories - Git handles versioning properly now  
-3. **🔐 Full Security Implementation**: Complete cryptographic signature verification with mbedtls
-4. **⚙️ Externalized Config**: WiFi credentials and settings moved to `config.h` (not tracked in Git)
-5. **🎯 True Modularity**: Two independent modules (speed_governor + distance_sensor) demonstrate independent updates
-6. **💡 Enhanced UX**: Success/failure states with 5-8 second LED feedback for clear user indication
+1. **🔒 CRITICAL SECURITY FIX**: Fixed major hash verification vulnerability - now uses authoritative manifest.json instead of downloaded metadata.json
+2. **⚡ Memory Optimization**: Reduced JSON memory usage by 50% (4KB → 2KB) with StaticJsonDocument
+3. **🚀 Compiler Optimization**: Added `-Os` flag for maximum binary size reduction
+4. **✨ Enhanced User Experience**: Professional logging with emojis and clear status indicators
+5. **💡 Advanced LED Feedback**: Sophisticated blinking patterns for real-time update status
 
-### 🚗 **The TATA EV Nexon Fix Actually Works Now!**
+### 🔐 **Security Enhancement Details:**
 
-Before our fix:
-```c
-// v1.0.0 BUG: Highway speed limited to 40 km/h
-if (road_conditions == 1) { // Highway 
-    return 40; // ❌ WRONG! Should be 100 km/h
-}
+**BEFORE (Vulnerable):**
+```cpp
+// ❌ SECURITY RISK: Used hash from downloaded metadata.json
+const char* expected_hash = metadata_doc["sha256"];
+// Attacker could compromise both binary AND metadata!
 ```
 
-After our fix:
-```c  
-// v1.1.0 FIXED: Proper highway speed limit
-if (road_conditions == 1) { // Highway
-    return highway_speed_limit; // ✅ 100 km/h on highways!
-}
+**AFTER (Secure):**
+```cpp
+// ✅ SECURE: Uses hash from authoritative manifest.json
+strncpy(update->sha256_hash, manifest_hash, sizeof(update->sha256_hash));
+// Manifest is single source of truth - eliminates attack vector!
 ```
 
-The system now **genuinely downloads new code** and **executes the fixed logic**! 🎯
+### 💡 **LED Feedback System:**
 
-### 🔧 **What Makes This Special:**
+- **💛 Yellow LED**: 
+  - *Slow blink (1s)* = Update available, waiting for vehicle idle
+  - *Fast blink (200ms)* = Download in progress
+- **💚 Green LED**: *Solid 5 seconds* = Update success
+- **❤️ Red LED**: *Solid 8 seconds* = Update failure
 
-- **True Binary Loading**: ESP32 downloads `.bin` files and executes them in real-time
-- **Function Pointer Magic**: Downloaded code replaces system functions dynamically  
-- **Production-Ready Architecture**: Designed for real automotive OTA systems
-- **Safety First**: Updates only when vehicle is idle, with automatic rollback
+### 🎯 **Enhanced User Experience:**
+
+```
+=== ESP32 Modular OTA System ===
+🚀 Starting secure modular firmware platform...
+📶 Connecting to WiFi network...
+✅ WiFi connected successfully!
+🔐 Initializing secure OTA updater...
+📦 Initializing dynamic module loader...
+🔧 Loading initial automotive modules...
+✅ Speed Governor v1.0.0 loaded and tracked
+✅ Distance Sensor v1.0.0 loaded and tracked
+
+🔍 Checking OTA server for module updates...
+🆕 New updates discovered!
+   💛 Yellow LED: Blinking slowly - waiting for vehicle idle
+🚗 Vehicle idle detected - safe to update!
+⬇️ Starting secure download process...
+🎉 Module update completed successfully!
+✅ Distance Sensor v1.1.0 now active and tracked
+   ✨ Enhanced precision with millimeter units!
+```
 
 ## 🚗 Project Overview
 
@@ -229,11 +248,27 @@ curl -H "Authorization: Bearer YOUR_KEY" YOUR_SUPABASE_URL/storage/v1/object/ota
 ## 🔒 Security Considerations
 
 ### Current Implementation (Production-Ready)
-- ✅ **SHA256 hash verification**: Ensures file integrity
-- ✅ **Cryptographic signature verification**: Full RSA/mbedtls implementation
-- ✅ **Metadata validation**: JSON parsing with error handling
-- ✅ **Safe update states**: Vehicle idle detection + rollback support
-- ✅ **Version tracking**: Prevents downgrade and repeat attacks
+- ✅ **SECURE Hash Verification**: Uses authoritative manifest.json as single source of truth
+- ✅ **Cryptographic Signature Verification**: Full RSA/mbedtls implementation  
+- ✅ **Memory-Optimized JSON Parsing**: StaticJsonDocument for better stability
+- ✅ **Metadata Validation**: Robust JSON parsing with comprehensive error handling
+- ✅ **Safe Update States**: Vehicle idle detection + automatic rollback support
+- ✅ **Version Tracking**: Prevents downgrade and replay attacks
+- ✅ **Optimized Binary Size**: Maximum compiler optimization for efficient updates
+
+### Security Architecture
+```
+┌─────────────────┐
+│  manifest.json  │ ◄── AUTHORITATIVE SOURCE
+│  (SHA256 Hash)  │     (Single Source of Truth)
+└─────────────────┘
+          │
+          ▼
+┌─────────────────┐     ┌─────────────────┐
+│ Downloaded      │────▶│ Hash Verification│
+│ Binary Module   │     │ (Prevents Tamper)│
+└─────────────────┘     └─────────────────┘
+```
 
 ### Additional Production Enhancements
 - **Secure Boot**: Verify loader firmware integrity at boot

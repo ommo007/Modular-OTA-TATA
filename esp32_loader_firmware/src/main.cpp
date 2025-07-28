@@ -42,6 +42,15 @@ unsigned long failure_state_start_time = 0;
 const unsigned long UPDATE_CHECK_INTERVAL = 30000; // 30 seconds
 const unsigned long SENSOR_READ_INTERVAL = 1000;   // 1 second
 
+// LED feedback system - Visual status indicators
+// 💛 Yellow LED: Slow blink = Update available, Fast blink = Downloading
+// 💚 Green LED: Solid = Update success (5 seconds)
+// ❤️  Red LED: Solid = Update failure (8 seconds)
+unsigned long last_led_blink_time = 0;
+bool led_blink_state = false;
+const unsigned long SLOW_BLINK_INTERVAL = 1000;    // 1 second for slow blink
+const unsigned long FAST_BLINK_INTERVAL = 200;     // 200ms for fast blink
+
 // System components
 SystemAPI system_api;
 OTAUpdater ota_updater;
@@ -79,7 +88,8 @@ const char* get_module_version_impl(const char* module_name);
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("ESP32 Modular OTA System Starting...");
+    Serial.println("\n=== ESP32 Modular OTA System ===");
+    Serial.println("🚀 Starting secure modular firmware platform...");
     
     // Initialize components
     setup_gpio();
@@ -88,52 +98,53 @@ void setup() {
     setup_system_api();
     
     // Initialize OTA updater
+    Serial.println("🔐 Initializing secure OTA updater...");
     if (!ota_updater_init(&ota_updater, SERVER_URL, DEVICE_ID, SIGNING_PUBLIC_KEY)) {
-        Serial.println("Failed to initialize OTA updater");
+        Serial.println("❌ OTA updater initialization failed!");
         current_state = STATE_ERROR;
         return;
     }
+    Serial.println("✅ OTA updater ready");
     
     // Initialize module loader
+    Serial.println("📦 Initializing dynamic module loader...");
     if (!module_loader_init(&module_loader, &system_api)) {
-        Serial.println("Failed to initialize module loader");
+        Serial.println("❌ Module loader initialization failed!");
         current_state = STATE_ERROR;
         return;
     }
+    Serial.println("✅ Module loader ready");
     
     // Load initial modules
-    Serial.println("Loading initial modules...");
+    Serial.println("\n🔧 Loading initial automotive modules...");
     
     // Load speed governor module
     if (module_loader_load_module(&module_loader, "speed_governor") == MODULE_LOAD_SUCCESS) {
-        Serial.println("Speed governor module loaded successfully");
-        // Track the module version in OTA updater
         LoadedModule* module = module_loader_get_module(&module_loader, "speed_governor");
         if (module) {
             ota_updater_set_module_version(&ota_updater, "speed_governor", module->version);
-            Serial.printf("Tracking speed_governor version: %s\n", module->version);
+            Serial.printf("✅ Speed Governor v%s loaded and tracked\n", module->version);
         }
     } else {
-        Serial.println("Failed to load speed governor module");
+        Serial.println("⚠️  Speed governor module not found (will be downloaded if available)");
     }
     
     // Load distance sensor module
     if (module_loader_load_module(&module_loader, "distance_sensor") == MODULE_LOAD_SUCCESS) {
-        Serial.println("Distance sensor module loaded successfully");
-        // Track the module version in OTA updater
         LoadedModule* module = module_loader_get_module(&module_loader, "distance_sensor");
         if (module) {
             ota_updater_set_module_version(&ota_updater, "distance_sensor", module->version);
-            Serial.printf("Tracking distance_sensor version: %s\n", module->version);
+            Serial.printf("✅ Distance Sensor v%s loaded and tracked\n", module->version);
         }
     } else {
-        Serial.println("Failed to load distance sensor module");
+        Serial.println("⚠️  Distance sensor module not found (will be downloaded if available)");
     }
     
     current_state = STATE_NORMAL_OPERATION;
     state_change_time = millis();
     
-    Serial.println("System initialization complete");
+    Serial.println("\n🎯 System initialization complete - Ready for OTA updates!");
+    Serial.println("💡 Press button to simulate vehicle idle for updates");
 }
 
 void loop() {
@@ -162,8 +173,9 @@ void setup_gpio() {
 }
 
 void setup_wifi() {
+    Serial.println("📶 Connecting to WiFi network...");
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    Serial.print("Connecting to WiFi");
+    Serial.print("   Attempting connection");
     
     int attempts = 0;
     while (WiFi.status() != WL_CONNECTED && attempts < 20) {
@@ -174,20 +186,22 @@ void setup_wifi() {
     
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println();
-        Serial.println("WiFi connected!");
-        Serial.print("IP address: ");
-        Serial.println(WiFi.localIP());
+        Serial.println("✅ WiFi connected successfully!");
+        Serial.printf("   📍 IP Address: %s\n", WiFi.localIP().toString().c_str());
+        Serial.println("   🌐 Ready for OTA server communication");
     } else {
-        Serial.println("\nWiFi connection failed!");
+        Serial.println("\n❌ WiFi connection failed!");
+        Serial.println("   ⚠️  OTA updates will not be available");
     }
 }
 
 void setup_filesystem() {
+    Serial.println("💾 Initializing filesystem...");
     if (!LittleFS.begin(true)) {
-        Serial.println("LittleFS Mount Failed");
+        Serial.println("❌ LittleFS mount failed!");
         return;
     }
-    Serial.println("LittleFS mounted successfully");
+    Serial.println("✅ LittleFS mounted - Ready for module storage");
 }
 
 void setup_system_api() {
@@ -222,15 +236,19 @@ void handle_state_machine() {
             break;
             
         case STATE_CHECK_UPDATES:
-            Serial.println("Checking for updates...");
+            Serial.println("\n🔍 Checking OTA server for module updates...");
             {
                 update_status_t status = ota_updater_check_for_updates(&ota_updater);
                 if (status == UPDATE_SUCCESS && ota_updater_has_pending_updates(&ota_updater)) {
-                    Serial.println("Updates available!");
+                    Serial.println("🆕 New updates discovered!");
+                    Serial.println("   💛 Yellow LED: Blinking slowly - waiting for vehicle idle");
                     current_state = STATE_UPDATE_AVAILABLE;
-                    set_led_state_impl(LED_YELLOW, true);
+                    // Initialize blinking state
+                    led_blink_state = true;
+                    last_led_blink_time = current_time;
+                    set_led_state_impl(LED_YELLOW, led_blink_state);
                 } else {
-                    Serial.println("No updates available");
+                    Serial.println("✅ All modules up to date");
                     current_state = STATE_NORMAL_OPERATION;
                 }
                 last_update_check = current_time;
@@ -238,39 +256,64 @@ void handle_state_machine() {
             break;
             
         case STATE_UPDATE_AVAILABLE:
-            // Notify user and wait for idle state
+            // Slow blink yellow LED to indicate update available
+            if (current_time - last_led_blink_time > SLOW_BLINK_INTERVAL) {
+                led_blink_state = !led_blink_state;
+                set_led_state_impl(LED_YELLOW, led_blink_state);
+                last_led_blink_time = current_time;
+            }
+            
+            // Wait for vehicle idle state
             if (vehicle_idle) {
-                Serial.println("Vehicle is idle, proceeding with update");
+                Serial.println("🚗 Vehicle idle detected - safe to update!");
+                Serial.println("⬇️  Starting secure download process...");
                 current_state = STATE_DOWNLOADING_UPDATE;
-                set_led_state_impl(LED_YELLOW, false);
+                set_led_state_impl(LED_YELLOW, false); // Turn off blinking
+                last_led_blink_time = current_time; // Reset blink timer
             }
             break;
             
         case STATE_DOWNLOADING_UPDATE:
-            Serial.println("Downloading and applying update...");
+            // Fast blink yellow LED during download
+            if (current_time - last_led_blink_time > FAST_BLINK_INTERVAL) {
+                led_blink_state = !led_blink_state;
+                set_led_state_impl(LED_YELLOW, led_blink_state);
+                last_led_blink_time = current_time;
+            }
+            
             {
-                // For demo, update the first pending module
+                // Process the first pending module update
                 if (ota_updater.pending_update_count > 0) {
                     const char* module_name = ota_updater.pending_updates[0].module_name;
                     update_status_t status = ota_updater_download_and_apply_update(&ota_updater, module_name);
                     
                     if (status == UPDATE_SUCCESS) {
-                        Serial.printf("Update applied successfully for %s\n", module_name);
+                        Serial.println("🎉 Module update completed successfully!");
+                        Serial.println("   💚 Green LED: Update success");
+                        
+                        // Turn off blinking yellow LED and turn on solid green
+                        set_led_state_impl(LED_YELLOW, false);
                         set_led_state_impl(LED_GREEN, true);
-                        // Reload the module
+                        
+                        // Reload the module with new version
+                        Serial.println("🔄 Reloading updated module...");
                         if (module_loader_reload_module(&module_loader, module_name) == MODULE_LOAD_SUCCESS) {
-                            // Update the tracked version
                             LoadedModule* module = module_loader_get_module(&module_loader, module_name);
                             if (module) {
                                 ota_updater_set_module_version(&ota_updater, module_name, module->version);
-                                Serial.printf("Updated tracking for %s to version: %s\n", module_name, module->version);
+                                Serial.printf("✅ %s v%s now active and tracked\n", module_name, module->version);
                             }
                         }
                         current_state = STATE_UPDATE_SUCCESS;
                         success_state_start_time = current_time;
                     } else {
-                        Serial.printf("Update failed for %s\n", module_name);
+                        Serial.println("❌ Module update failed!");
+                        Serial.println("   ❤️  Red LED: Update failure");
+                        
+                        // Turn off blinking yellow LED and turn on solid red
+                        set_led_state_impl(LED_YELLOW, false);
                         set_led_state_impl(LED_RED, true);
+                        
                         current_state = STATE_UPDATE_FAILURE;
                         failure_state_start_time = current_time;
                     }
@@ -282,7 +325,7 @@ void handle_state_machine() {
         case STATE_UPDATE_SUCCESS:
             // Show success LED for 5 seconds, then return to normal operation
             if (current_time - success_state_start_time > 5000) {
-                Serial.println("Update success display complete, returning to normal operation");
+                Serial.println("🟢 Update celebration complete - resuming normal operation");
                 set_led_state_impl(LED_GREEN, false);
                 current_state = STATE_NORMAL_OPERATION;
                 state_change_time = current_time;
@@ -293,7 +336,8 @@ void handle_state_machine() {
         case STATE_UPDATE_FAILURE:
             // Show failure LED for 8 seconds, then return to normal operation
             if (current_time - failure_state_start_time > 8000) {
-                Serial.println("Update failure display complete, returning to normal operation");
+                Serial.println("🔴 Failure notification complete - resuming normal operation");
+                Serial.println("   💡 Previous module version still active and safe");
                 set_led_state_impl(LED_RED, false);
                 current_state = STATE_NORMAL_OPERATION;
                 state_change_time = current_time;
@@ -325,41 +369,45 @@ void update_sensors() {
         
         last_sensor_read = current_time;
         
-        // Test loaded modules - showcase both normal and highway conditions
+        // Demonstrate speed governor functionality
         LoadedModule* speed_module = module_loader_get_module(&module_loader, "speed_governor");
         if (speed_module && speed_module->is_active) {
-            // Call module function if available
             SpeedGovernorInterface* speed_interface = (SpeedGovernorInterface*)speed_module->interface->module_functions;
             if (speed_interface && speed_interface->get_speed_limit) {
-                // Test normal road conditions
-                int normal_speed_limit = speed_interface->get_speed_limit(60, 0); // 60 km/h, normal conditions
-                Serial.printf("Normal road speed limit: %d km/h\n", normal_speed_limit);
+                // Test different road conditions
+                int normal_speed_limit = speed_interface->get_speed_limit(60, 0);
+                int highway_speed_limit = speed_interface->get_speed_limit(60, 1);
                 
-                // Test highway conditions to showcase the fix
-                int highway_speed_limit = speed_interface->get_speed_limit(60, 1); // 60 km/h, highway conditions
-                Serial.printf("Highway speed limit: %d km/h (fixed in v1.1.0)\n", highway_speed_limit);
+                Serial.printf("🚗 Speed Governor v%s: Normal %d km/h | Highway %d km/h\n", 
+                             speed_module->version, normal_speed_limit, highway_speed_limit);
+                
+                // Highlight the fix in v1.1.0
+                if (strcmp(speed_module->version, "1.1.0") == 0) {
+                    Serial.println("   ✨ Highway speed limit bug fixed in this version!");
+                }
             }
         }
         
-        // Test distance sensor module
+        // Demonstrate distance sensor functionality
         LoadedModule* distance_module = module_loader_get_module(&module_loader, "distance_sensor");
         if (distance_module && distance_module->is_active) {
             DistanceSensorInterface* distance_interface = (DistanceSensorInterface*)distance_module->interface->module_functions;
             if (distance_interface && distance_interface->get_distance) {
                 float distance = distance_interface->get_distance();
                 
-                // Display units based on version to show the difference
+                // Show different units based on version
                 if (strcmp(distance_module->version, "1.0.0") == 0) {
-                    Serial.printf("Distance reading: %.1f cm (from v%s)\n", distance, distance_module->version);
-                    // v1.0.0 uses cm, so check for 30cm threshold
+                    Serial.printf("📏 Distance Sensor v%s: %.1f cm\n", distance_module->version, distance);
                     if (distance_interface->is_object_detected && distance_interface->is_object_detected(30.0f)) {
-                        Serial.println("Object detected within 30cm!");
+                        Serial.println("   ⚠️  Object detected within 30cm!");
                     }
                 } else {
-                    Serial.printf("Distance reading: %.0f mm (from v%s - NEW UNITS!)\n", distance, distance_module->version);
-                    // v1.1.0 uses mm, so check for 300mm threshold (same as 30cm)
+                    Serial.printf("📏 Distance Sensor v%s: %.0f mm (improved precision!)\n", distance_module->version, distance);
                     if (distance_interface->is_object_detected && distance_interface->is_object_detected(300.0f)) {
-                        Serial.println("Object detected within 300mm (30cm)!");
+                        Serial.println("   ⚠️  Object detected within 300mm!");
+                    }
+                    if (strcmp(distance_module->version, "1.1.0") == 0) {
+                        Serial.println("   ✨ Enhanced precision with millimeter units!");
                     }
                 }
             }

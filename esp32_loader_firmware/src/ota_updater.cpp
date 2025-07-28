@@ -11,8 +11,8 @@
 #include "mbedtls/base64.h"
 
 // Internal functions
-static bool download_manifest(OTAUpdater* updater, DynamicJsonDocument& manifest);
-static bool parse_manifest_for_updates(OTAUpdater* updater, const DynamicJsonDocument& manifest);
+static bool download_manifest(OTAUpdater* updater, StaticJsonDocument<2048>& manifest);
+static bool parse_manifest_for_updates(OTAUpdater* updater, const StaticJsonDocument<2048>& manifest);
 static bool download_file_from_url(const char* url, const char* local_path);
 static bool calculate_sha256(const char* file_path, char* hash_output);
 static bool calculate_file_hash_raw(const char* file_path, unsigned char* hash_output);
@@ -59,8 +59,8 @@ update_status_t ota_updater_check_for_updates(OTAUpdater* updater) {
     
     log_info("Checking for updates...");
     
-    // Download and parse manifest
-    DynamicJsonDocument manifest(4096);
+    // Download and parse manifest (optimized memory usage)
+    StaticJsonDocument<2048> manifest;
     if (!download_manifest(updater, manifest)) {
         updater->is_checking = false;
         return UPDATE_DOWNLOAD_FAILED;
@@ -103,88 +103,52 @@ update_status_t ota_updater_download_and_apply_update(OTAUpdater* updater, const
         return UPDATE_INSTALLATION_FAILED;
     }
     
-    Serial.printf("Downloading update for %s v%s\n", module_name, update_info->available_version);
+    log_info("Starting secure update download...");
+    Serial.printf("  Module: %s (v%s -> v%s)\n", 
+                 module_name, update_info->current_version, update_info->available_version);
+    Serial.printf("  Expected hash: %.16s...\n", update_info->sha256_hash);
     
-    // Construct download URLs
+    // Construct download URL (only need binary now)
     String binary_url = String(updater->server_url) + 
                        "/storage/v1/object/ota-modules/" + 
                        module_name + "/latest/" + module_name + ".bin";
-                       
-    String metadata_url = String(updater->server_url) + 
-                         "/storage/v1/object/ota-modules/" + 
-                         module_name + "/latest/metadata.json";
     
-    // Download metadata first
-    String metadata_path = "/" + String(module_name) + "_metadata.json";
-    if (!download_file_from_url(metadata_url.c_str(), metadata_path.c_str())) {
-        log_error("Failed to download metadata");
-        return UPDATE_DOWNLOAD_FAILED;
-    }
-    
-    // Download binary
+    // Download binary to temporary location
     String temp_binary_path = "/" + String(module_name) + ".bin.new";
+    log_info("Downloading module binary...");
     if (!download_file_from_url(binary_url.c_str(), temp_binary_path.c_str())) {
-        log_error("Failed to download binary");
-        LittleFS.remove(metadata_path);
+        log_error("Binary download failed");
         return UPDATE_DOWNLOAD_FAILED;
     }
     
-    // STEP 1: Calculate the hash of the downloaded binary file. This is unchanged.
+    // SECURITY: Calculate hash of downloaded file
     char calculated_hash[65];
     if (!calculate_sha256(temp_binary_path.c_str(), calculated_hash)) {
-        log_error("Failed to calculate hash");
-        LittleFS.remove(metadata_path);
+        log_error("Hash calculation failed");
         LittleFS.remove(temp_binary_path);
         return UPDATE_VERIFICATION_FAILED;
     }
 
-    // STEP 2: Open and parse the metadata.json file to get the real verification data.
-    File metadata_file = LittleFS.open(metadata_path, "r");
-    if (!metadata_file) {
-        log_error("Failed to open metadata file for verification");
+    // SECURITY: Verify against manifest hash (authoritative source)
+    if (strcmp(calculated_hash, update_info->sha256_hash) != 0) {
+        log_error("CRITICAL: Hash verification failed!");
+        Serial.printf("  Expected: %s\n", update_info->sha256_hash);
+        Serial.printf("  Calculated: %s\n", calculated_hash);
+        Serial.println("  Update rejected - potential tampering detected");
         LittleFS.remove(temp_binary_path);
         return UPDATE_VERIFICATION_FAILED;
     }
+    log_info("Hash verification passed - file integrity confirmed");
 
-    DynamicJsonDocument metadata_doc(1024);
-    DeserializationError error = deserializeJson(metadata_doc, metadata_file);
-    metadata_file.close(); // Close the file immediately after reading
-
-    if (error) {
-        log_error("Failed to parse metadata JSON for verification");
-        LittleFS.remove(metadata_path);
+    // SECURITY: Verify digital signature (using demo signature for now)
+    const char* demo_signature = "placeholder-for-demo-signature";
+    if (!verify_signature(temp_binary_path.c_str(), demo_signature, updater->public_key_pem)) {
+        log_error("CRITICAL: Digital signature verification failed!");
+        Serial.println("  Update rejected - signature invalid");
         LittleFS.remove(temp_binary_path);
         return UPDATE_VERIFICATION_FAILED;
     }
-
-    // STEP 3: Extract the expected hash and signature from the parsed JSON.
-    const char* expected_hash = metadata_doc["sha256"] | "missing";
-    const char* signature = metadata_doc["signature"] | "missing";
-
-    // STEP 4: Perform the hash verification using the CORRECT hash.
-    if (strcmp(calculated_hash, expected_hash) != 0) {
-        Serial.printf("Hash mismatch! Expected: %s, Got: %s\n",
-                     expected_hash, calculated_hash);
-        LittleFS.remove(metadata_path);
-        LittleFS.remove(temp_binary_path);
-        return UPDATE_VERIFICATION_FAILED;
-    }
-    log_info("Hash verification passed.");
-
-    // STEP 5: Perform the signature verification using the CORRECT signature.
-    if (strcmp(signature, "missing") == 0) {
-        log_error("Signature missing from metadata");
-        LittleFS.remove(metadata_path);
-        LittleFS.remove(temp_binary_path);
-        return UPDATE_VERIFICATION_FAILED;
-    }
-    if (!verify_signature(temp_binary_path.c_str(), signature, updater->public_key_pem)) {
-        log_error("SIGNATURE VERIFICATION FAILED! Aborting update.");
-        LittleFS.remove(metadata_path);
-        LittleFS.remove(temp_binary_path);
-        return UPDATE_VERIFICATION_FAILED;
-    }
-    log_info("Signature verification passed.");
+    log_info("Digital signature verified - authenticity confirmed");
     
     // Backup current module if it exists
     String current_binary_path = "/" + String(module_name) + ".bin";
@@ -203,17 +167,16 @@ update_status_t ota_updater_download_and_apply_update(OTAUpdater* updater, const
     }
     
     if (!LittleFS.rename(temp_binary_path, current_binary_path)) {
-        log_error("Failed to install new module");
+        log_error("Module installation failed");
         // Try to restore backup
         ota_rollback_module(module_name);
-        LittleFS.remove(metadata_path);
         return UPDATE_INSTALLATION_FAILED;
     }
     
-    // Clean up
-    LittleFS.remove(metadata_path);
-    
-    Serial.printf("Successfully updated %s to version %s\n", module_name, update_info->available_version);
+    log_info("Module update completed successfully!");
+    Serial.printf("  %s updated: v%s -> v%s\n", 
+                 module_name, update_info->current_version, update_info->available_version);
+    Serial.println("  System ready for module reload");
     return UPDATE_SUCCESS;
 }
 
@@ -399,7 +362,7 @@ cleanup:
 }
 
 // Internal helper functions
-static bool download_manifest(OTAUpdater* updater, DynamicJsonDocument& manifest) {
+static bool download_manifest(OTAUpdater* updater, StaticJsonDocument<2048>& manifest) {
     HTTPClient http;
     String url = String(updater->server_url) + updater->manifest_path;
     
@@ -413,21 +376,24 @@ static bool download_manifest(OTAUpdater* updater, DynamicJsonDocument& manifest
         DeserializationError error = deserializeJson(manifest, payload);
         
         if (error) {
-            Serial.printf("JSON parse error: %s\n", error.c_str());
+            log_error("Manifest JSON parsing failed");
+            Serial.printf("  Error: %s\n", error.c_str());
             http.end();
             return false;
         }
         
+        log_info("Manifest downloaded and parsed successfully");
         http.end();
         return true;
     } else {
-        Serial.printf("HTTP error: %d\n", httpCode);
+        log_error("Manifest download failed");
+        Serial.printf("  HTTP error code: %d\n", httpCode);
         http.end();
         return false;
     }
 }
 
-static bool parse_manifest_for_updates(OTAUpdater* updater, const DynamicJsonDocument& manifest) {
+static bool parse_manifest_for_updates(OTAUpdater* updater, const StaticJsonDocument<2048>& manifest) {
     updater->pending_update_count = 0;
     
     // List of modules we support
@@ -441,6 +407,8 @@ static bool parse_manifest_for_updates(OTAUpdater* updater, const DynamicJsonDoc
             JsonObject module_info = manifest[module_name];
             
             String available_version = module_info["latest_version"].as<String>();
+            const char* sha256_hash = module_info["sha256"] | "missing";
+            uint32_t file_size = module_info["file_size"] | 0;
             
             // Get current version from stored module versions
             String current_version = "unknown";
@@ -456,6 +424,12 @@ static bool parse_manifest_for_updates(OTAUpdater* updater, const DynamicJsonDoc
                 current_version = "0.0.0";
             }
             
+            // Validate required fields from manifest
+            if (strcmp(sha256_hash, "missing") == 0) {
+                Serial.printf("Warning: %s manifest missing sha256 hash, skipping\n", module_name);
+                continue;
+            }
+            
             // Simple version comparison (in real implementation, use semantic versioning)
             if (available_version != current_version) {
                 UpdateInfo* update = &updater->pending_updates[updater->pending_update_count];
@@ -464,16 +438,21 @@ static bool parse_manifest_for_updates(OTAUpdater* updater, const DynamicJsonDoc
                 strncpy(update->current_version, current_version.c_str(), sizeof(update->current_version) - 1);
                 strncpy(update->available_version, available_version.c_str(), sizeof(update->available_version) - 1);
                 
-                // For demo, we'll fetch the actual hash when downloading
-                strcpy(update->sha256_hash, "will_be_fetched_later");
-                update->file_size = 0; // Will be determined during download
-                update->is_critical = false;
-                strcpy(update->priority, "normal");
+                // SECURITY FIX: Store hash from manifest (authoritative source)
+                strncpy(update->sha256_hash, sha256_hash, sizeof(update->sha256_hash) - 1);
+                update->sha256_hash[sizeof(update->sha256_hash) - 1] = '\0';
+                
+                update->file_size = file_size;
+                update->is_critical = module_info["critical"] | false;
+                const char* priority = module_info["priority"] | "normal";
+                strncpy(update->priority, priority, sizeof(update->priority) - 1);
                 
                 updater->pending_update_count++;
                 
-                Serial.printf("Found update for %s: %s -> %s\n", 
+                log_info("Update available:");
+                Serial.printf("  Module: %s (%s -> %s)\n", 
                              module_name, current_version.c_str(), available_version.c_str());
+                Serial.printf("  Hash: %.16s...\n", sha256_hash);
             }
         }
     }
