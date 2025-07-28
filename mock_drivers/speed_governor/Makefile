@@ -1,4 +1,4 @@
-# Makefile for Speed Governor Module (updated to ensure binary is created)
+# Makefile for Speed Governor Module v1.1.0
 
 TOOLCHAIN_PREFIX ?= xtensa-esp32-elf-
 CC = $(TOOLCHAIN_PREFIX)gcc
@@ -19,13 +19,13 @@ CFLAGS = -Os -mlongcalls -ffunction-sections -fdata-sections \
          -fPIC -nostdlib -std=c99 -Wall \
          -I../../esp32_loader_firmware/include
 
-# NOTE: Added -lgcc -lm here to prevent float/double issues
-LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT) -lgcc -lm
+LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT)
 
 all: $(BUILD_DIR)/$(MODULE_NAME).bin
 
+# Generate linker script
 $(BUILD_DIR)/$(LDSCRIPT):
-	mkdir -p $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)
 	@echo "ENTRY($(ENTRY_POINT_FUNC))" > $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "SECTIONS" >> $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "{" >> $(BUILD_DIR)/$(LDSCRIPT)
@@ -33,20 +33,25 @@ $(BUILD_DIR)/$(LDSCRIPT):
 	@echo "  .rodata : { *(.rodata) }" >> $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "}" >> $(BUILD_DIR)/$(LDSCRIPT)
 
+# Compile source files
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
-	mkdir -p $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Link objects into ELF
 $(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT)
-	$(CC) $(LDFLAGS) $(OBJECTS) -o $@
+	$(CC) $(LDFLAGS) $(OBJECTS) -lgcc -lm -o $@
 	$(SIZE) $@
 
+# Convert ELF to raw binary
 $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf
 	$(OBJCOPY) -O binary $< $@
-	@echo "Binary size: $$(stat -f%z $@) bytes"
-	@echo "VERSION: This is the updated v1.1.0 that fixes highway speed limit issue"
+	@echo "✅ Binary created: $@"
+	@echo "📦 Version: Speed Governor v1.1.0"
 
+# Convenience targets
 build: all
+
 clean:
 	rm -rf $(BUILD_DIR)
 
