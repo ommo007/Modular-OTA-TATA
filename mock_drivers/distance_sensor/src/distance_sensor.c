@@ -1,5 +1,6 @@
 #include "../../esp32_loader_firmware/include/system_api.h"
 #include <stddef.h>
+#include <math.h>  // Added for fabsf()
 
 // Module metadata - Version 1.0.0
 #define MODULE_NAME "distance_sensor"
@@ -79,7 +80,6 @@ static void update_module(void) {
     float raw_distance = sys_api->read_distance_sensor();
     
     // Apply calibration offset and convert to centimeters
-    // v1.0.0: Raw reading is already in cm, just apply offset
     last_distance_reading = raw_distance + calibration_offset;
     
     // Ensure reasonable bounds
@@ -94,16 +94,16 @@ static void update_module(void) {
     static uint32_t last_log_time = 0;
     uint32_t current_time = sys_api->get_millis();
     if (current_time - last_log_time > 10000) {
+        int cm = (int)last_distance_reading;
+        int decimal = (int)(fabsf(last_distance_reading * 10.0f)) % 10;
         sys_api->log_printf(LOG_INFO, MODULE_NAME, 
-                           "Distance: %.1f cm (v1.0.0)", 
-                           last_distance_reading);
+                           "Distance: %d.%d cm (v1.0.0)", cm, decimal);
         last_log_time = current_time;
     }
 }
 
 // Distance sensor interface implementation
 static float get_distance(void) {
-    // v1.0.0: Return distance in centimeters
     return last_distance_reading;
 }
 
@@ -114,17 +114,18 @@ static void calibrate_sensor(void) {
     
     sys_api->log_message(LOG_INFO, MODULE_NAME, "Calibrating distance sensor...");
     
-    // Simple calibration: assume current reading should be 30cm
     float raw_reading = sys_api->read_distance_sensor();
     calibration_offset = 30.0f - raw_reading;
     sensor_calibrated = true;
-    
-    sys_api->log_printf(LOG_INFO, MODULE_NAME, 
-                       "Calibration complete. Offset: %.2f cm", 
-                       calibration_offset);
+
+    int cm = (int)calibration_offset;
+    int decimal = (int)(fabsf(calibration_offset * 100.0f)) % 100;
+
+    sys_api->log_printf(LOG_INFO, MODULE_NAME,
+        "Calibration complete. Offset: %d.%02d cm",
+        cm, decimal);
 }
 
 static bool is_object_detected(float threshold) {
-    // Return true if current distance is less than threshold
     return (last_distance_reading < threshold);
-} 
+}
