@@ -68,15 +68,11 @@ upload_file() {
     local local_path="$1"
     local remote_path="$2"
     local content_type="$3"
-    
-    # DEBUG: Show the exact URL being constructed
-    local full_url="$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path"
-    echo -e "${YELLOW}🐛 DEBUG: Full upload URL='$full_url'${NC}" >&2
 
     echo -e "${YELLOW}☁️  Uploading:${NC} $local_path -> $remote_path" >&2
     local http_code=$(curl -s -w "%{http_code}" -o /dev/null \
         -X POST \
-        "$full_url" \
+        "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
         -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
         -H "Content-Type: $content_type" \
         --data-binary "@$local_path")
@@ -111,21 +107,13 @@ deploy_module() {
 
     # Construct the new, flat versioned filename
     local versioned_filename="${module_name}-v${version}.bin"
-    local full_versioned_path="$module_name/$versioned_filename"
-    local full_latest_path="$module_name/latest.bin"
-    
-    # DEBUG: Show exactly what paths we're constructing
-    echo -e "${YELLOW}🐛 DEBUG: module_name='$module_name', version='$version'${NC}" >&2
-    echo -e "${YELLOW}🐛 DEBUG: versioned_filename='$versioned_filename'${NC}" >&2
-    echo -e "${YELLOW}🐛 DEBUG: full_versioned_path='$full_versioned_path'${NC}" >&2
-    echo -e "${YELLOW}🐛 DEBUG: full_latest_path='$full_latest_path'${NC}" >&2
     
     echo "☁️  Uploading immutable versioned artifact ($versioned_filename)..." >&2
-    if ! upload_file "$binary_path" "$full_versioned_path" "application/octet-stream"; then return 1; fi
+    if ! upload_file "$binary_path" "$module_name/$versioned_filename" "application/octet-stream"; then return 1; fi
 
     echo "☁️  Updating mutable 'latest' pointer..." >&2
-    delete_file "$full_latest_path"
-    if ! upload_file "$binary_path" "$full_latest_path" "application/octet-stream"; then return 1; fi
+    delete_file "$module_name/latest.bin"
+    if ! upload_file "$binary_path" "$module_name/latest.bin" "application/octet-stream"; then return 1; fi
 
     echo -e "${GREEN}🎉 Module '$module_name' deployed to cloud successfully!${NC}" >&2
     cd "$PROJECT_ROOT"
