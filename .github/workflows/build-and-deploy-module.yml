@@ -114,11 +114,11 @@ jobs:
           # Set PATH to include ESP32 toolchain
           export PATH="$HOME/.espressif/xtensa-esp32-elf/bin:$PATH"
           
-                     echo "🔍 Changed files: ${{ steps.changed_files.outputs.all_changed_files }}"
-           echo "🏗️ Starting intelligent deployment process..."
-           
-           # Run the intelligent deployment script with changed files as arguments
-           ./scripts/deploy-to-supabase.sh ${{ steps.changed_files.outputs.all_changed_files }}
+          echo "🔍 Changed files: ${{ steps.changed_files.outputs.all_changed_files }}"
+          echo "🏗️ Starting intelligent deployment process..."
+          
+          # Run the intelligent deployment script with changed files as arguments
+          ./scripts/deploy-to-supabase.sh ${{ steps.changed_files.outputs.all_changed_files }}
           
           # Extract deployed modules for output
           echo "modules_deployed=true" >> $GITHUB_OUTPUT
