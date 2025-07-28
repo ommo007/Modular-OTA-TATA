@@ -136,6 +136,7 @@ upload_file() {
 }
 
 # Builds a module and uploads its artifacts
+# Builds a module and uploads its artifacts
 deploy_module() {
     local module_name="$1"
     local module_path="$PROJECT_ROOT/mock_drivers/$module_name"
@@ -143,50 +144,33 @@ deploy_module() {
     echo -e "\n${BLUE}--- Processing Module: $module_name ---${NC}"
     cd "$module_path"
 
-    # --- FIX POINT 1: BUILD FIRST ---
-    # First, we build the binary. This is the most important step.
-    # If this fails, we don't need to do anything else.
+    # --- BUILD STEP with ROBUST ERROR HANDLING ---
     echo "🔨 Building binary..."
     
-    # Check if ESP32 toolchain is available
-    if ! command -v xtensa-esp32-elf-gcc &> /dev/null; then
-        echo -e "${YELLOW}⚠️  ESP32 toolchain not found. Attempting to build anyway...${NC}"
-    fi
-    
-    # Clean and build with better error capture
+    # Capture the output and the exit code of the make command
     local build_output
-    build_output=$(make clean 2>&1 && make build 2>&1)
+    build_output=$( (make clean && make build) 2>&1 )
     local build_result=$?
     
+    # Check if the build failed
     if [ $build_result -ne 0 ]; then
-        echo -e "${RED}❌ Build failed for $module_name.${NC}" >&2
-        echo -e "${RED}Build output:${NC}" >&2
+        echo -e "${RED}❌ Build failed for module '$module_name'.${NC}" >&2
+        echo -e "${YELLOW}--- Build Log ---${NC}" >&2
         echo "$build_output" >&2
-        
-        # Check if it's a toolchain issue and create dummy binary for testing
-        if [[ $build_output == *"xtensa-esp32-elf-gcc"* ]] || [[ $build_output == *"command not found"* ]]; then
-            echo -e "${YELLOW}💡 ESP32 toolchain not available. Creating dummy binary for testing...${NC}" >&2
-            mkdir -p build
-            # Create a dummy binary with some realistic content
-            printf "ESP32_MODULE_BINARY_v1.1.0\x00\x01\x02\x03" > "build/$module_name.bin"
-            echo -e "${GREEN}✅ Dummy binary created for deployment testing.${NC}" >&2
-        else
-            return 1
-        fi
-    fi
-    
-    local binary_path="build/$module_name.bin"
-    
-    # Verify the binary file was actually created
-    if [ ! -f "$binary_path" ]; then
-        echo -e "${RED}❌ Binary file was not created: $binary_path${NC}" >&2
+        echo -e "${YELLOW}--- End Build Log ---${NC}" >&2
         return 1
     fi
     
+    local binary_path="build/$module_name.bin"
+    # Verify the binary file was actually created
+    if [ ! -f "$binary_path" ]; then
+        echo -e "${RED}❌ Build succeeded, but binary file was not found at '$binary_path'.${NC}" >&2
+        return 1
+    fi
     echo -e "${GREEN}✅ Build successful.${NC}"
 
-    # --- FIX POINT 2: GET METADATA AFTER BUILD ---
-    # Now that the binary exists, we can safely get its metadata and determine the version.
+    # --- METADATA AND DEPLOYMENT ---
+    # This part now only runs if the build was successful.
     local version=$(get_next_version "$module_name")
     local hash=$(sha256sum "$binary_path" | cut -d' ' -f1)
     local size=$(stat -c%s "$binary_path")
