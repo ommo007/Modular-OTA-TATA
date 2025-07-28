@@ -38,7 +38,7 @@ get_existing_versions() {
         sort -V || echo ""
 }
 
-# Calculates the next semantic version
+# Calculates the next semantic version with flexible handling
 get_next_version() {
     local module_name="$1"
     local base_version="v1.1.0"
@@ -52,11 +52,30 @@ get_next_version() {
         return
     fi
 
-    IFS='.' read -r major minor patch <<< "${latest_version//v/}"
-    local next_patch=$((patch + 1))
-    local next_version="v${major}.${minor}.${next_patch}"
-    echo -e "${GREEN}📦 Latest version is $latest_version. Next version will be $next_version.${NC}"
-    echo "$next_version"
+    # Parse the latest version
+    if [[ $latest_version =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+        local major="${BASH_REMATCH[1]}"
+        local minor="${BASH_REMATCH[2]}"
+        local patch="${BASH_REMATCH[3]}"
+        
+        # Flexible version increment: try minor version bump first, then patch
+        local next_minor_version="v${major}.$((minor + 1)).0"
+        local next_patch_version="v${major}.${minor}.$((patch + 1))"
+        
+        # Check if minor bump version exists, if not use it, otherwise use patch bump
+        local existing_minor=$(get_existing_versions "$module_name" | grep -F "$next_minor_version" || echo "")
+        if [ -z "$existing_minor" ]; then
+            echo -e "${GREEN}📦 Latest version is $latest_version. Next version will be $next_minor_version.${NC}"
+            echo "$next_minor_version"
+        else
+            echo -e "${GREEN}📦 Latest version is $latest_version. Next version will be $next_patch_version.${NC}"
+            echo "$next_patch_version"
+        fi
+    else
+        # Fallback to base version if parsing fails
+        echo -e "${YELLOW}⚠️  Could not parse latest version '$latest_version'. Using $base_version.${NC}"
+        echo "$base_version"
+    fi
 }
 
 # Uploads a file, handling potential conflicts for mutable files
@@ -65,6 +84,12 @@ upload_file() {
     local remote_path="$2"
     local content_type="$3"
     local allow_overwrite="$4"
+
+    # Check if local file exists before attempting upload
+    if [ ! -f "$local_path" ]; then
+        echo -e "${RED}❌ Local file does not exist: $local_path${NC}" >&2
+        return 1
+    fi
 
     echo -e "${YELLOW}☁️  Uploading:${NC} $local_path -> $remote_path"
     local method="POST"
@@ -76,16 +101,26 @@ upload_file() {
         success_msg="✅ Successfully updated (overwritten)."
     fi
 
-    response=$(curl -s -w "%{http_code}" \
+    # Use a temporary file to capture the full response
+    local temp_response=$(mktemp)
+    local http_code=$(curl -s -w "%{http_code}" \
         -X "$method" \
         "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
         -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
         -H "Content-Type: $content_type" \
-        --data-binary "@$local_path")
+        --data-binary "@$local_path" \
+        -o "$temp_response")
     
-    http_code="${response: -3}"
+    # Clean up temp file
+    rm -f "$temp_response"
 
-    if [ "$http_code" -eq 200 ]; then
+    # Validate http_code is numeric
+    if ! [[ "$http_code" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}❌ Upload failed for $remote_path (Invalid HTTP response).${NC}" >&2
+        return 1
+    fi
+
+    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
         echo -e "${GREEN}$success_msg${NC}"
         return 0
     else
@@ -112,12 +147,39 @@ deploy_module() {
     # First, we build the binary. This is the most important step.
     # If this fails, we don't need to do anything else.
     echo "🔨 Building binary..."
-    # Redirect stdout to /dev/null to keep the log clean, but let stderr show errors
-    if ! make clean && make build > /dev/null; then
+    
+    # Check if ESP32 toolchain is available
+    if ! command -v xtensa-esp32-elf-gcc &> /dev/null; then
+        echo -e "${YELLOW}⚠️  ESP32 toolchain not found. Attempting to build anyway...${NC}"
+    fi
+    
+    # Clean and build with better error capture
+    local build_output
+    build_output=$(make clean 2>&1 && make build 2>&1)
+    local build_result=$?
+    
+    if [ $build_result -ne 0 ]; then
         echo -e "${RED}❌ Build failed for $module_name.${NC}" >&2
+        echo -e "${RED}Build output:${NC}" >&2
+        echo "$build_output" >&2
+        
+        # Check if it's a toolchain issue
+        if [[ $build_output == *"xtensa-esp32-elf-gcc"* ]] || [[ $build_output == *"command not found"* ]]; then
+            echo -e "${YELLOW}💡 This appears to be a toolchain issue. Please install the ESP32 toolchain.${NC}" >&2
+            echo -e "${YELLOW}💡 For development/testing, you can create a dummy binary file:${NC}" >&2
+            echo -e "${YELLOW}   mkdir -p build && echo 'dummy binary' > build/$module_name.bin${NC}" >&2
+        fi
         return 1
     fi
+    
     local binary_path="build/$module_name.bin"
+    
+    # Verify the binary file was actually created
+    if [ ! -f "$binary_path" ]; then
+        echo -e "${RED}❌ Binary file was not created: $binary_path${NC}" >&2
+        return 1
+    fi
+    
     echo -e "${GREEN}✅ Build successful.${NC}"
 
     # --- FIX POINT 2: GET METADATA AFTER BUILD ---

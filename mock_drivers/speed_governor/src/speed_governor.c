@@ -3,7 +3,7 @@
 
 // Module metadata - UPDATED VERSION
 #define MODULE_NAME "speed_governor"
-#define MODULE_VERSION "1.1.0"  // Updated version
+#define MODULE_VERSION "0.0.1"  // Updated version
 
 // Global system API pointer
 static SystemAPI* sys_api = NULL;
