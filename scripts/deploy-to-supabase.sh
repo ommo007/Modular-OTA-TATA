@@ -61,45 +61,36 @@ get_next_version() {
     echo "$next_version" # This is the actual return value to stdout
 }
 
-# Uploads a file, handling potential conflicts for mutable files
+# Uploads a file, using the 'x-upsert' header for robust conflict handling.
 upload_file() {
     local local_path="$1"
     local remote_path="$2"
     local content_type="$3"
     local allow_overwrite="$4"
 
-    # FIX: All logging messages are redirected to stderr (>&2)
-    echo -e "${YELLOW}☁️  Uploading:${NC} $local_path -> $remote_path" >&2
-    local method="POST"
-    local success_msg="✅ Successfully uploaded (new)."
-    
+    # Set the upsert header based on whether we allow overwriting.
+    # 'true' = create or update. 'false' = create only, fail if exists.
+    local upsert_header="x-upsert: false"
     if [ "$allow_overwrite" = "true" ]; then
-        method="PUT"
-        success_msg="✅ Successfully updated (overwritten)."
+        upsert_header="x-upsert: true"
     fi
 
-    # --- CRITICAL FIX IS HERE ---
-    # The '-o /dev/null' option tells curl to discard the response body,
-    # ensuring that only the HTTP status code is captured by the variable.
+    echo -e "${YELLOW}☁️  Uploading:${NC} $local_path -> $remote_path (Overwrite: $allow_overwrite)" >&2
+
     local http_code=$(curl -s -w "%{http_code}" \
         -o /dev/null \
-        -X "$method" \
+        -X POST \
         "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
         -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
         -H "Content-Type: $content_type" \
+        -H "$upsert_header" \
         --data-binary "@$local_path")
     
-    if [ "$http_code" -eq 200 ]; then
-        echo -e "${GREEN}$success_msg${NC}" >&2
+    # Check for success codes (200 OK or 201 Created)
+    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+        echo -e "${GREEN}✅ Upload successful (HTTP $http_code).${NC}" >&2
         return 0
     else
-        # If POST failed with 409 (Conflict) and we allow overwrite, try PUT
-        if [ "$method" = "POST" ] && [ "$http_code" -eq 409 ] && [ "$allow_overwrite" = "true" ]; then
-             echo -e "${YELLOW}📝 File exists. Attempting to overwrite with PUT...${NC}" >&2
-             # Recursively call the function to attempt a PUT
-             upload_file "$local_path" "$remote_path" "$content_type" "true"
-             return $?
-        fi
         echo -e "${RED}❌ Upload failed for $remote_path (HTTP $http_code).${NC}" >&2
         return 1
     fi
