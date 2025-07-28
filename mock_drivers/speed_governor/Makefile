@@ -43,23 +43,11 @@ $(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT)
 
 $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf
 	$(OBJCOPY) -O binary $< $@
-<<<<<<< HEAD
 	@echo "Binary size: $$(stat -f%z $@) bytes"
 	@echo "VERSION: This is the updated v1.1.0 that fixes highway speed limit issue"
-=======
-	@if [ ! -f $@ ]; then \
-		echo "❌ Binary not found after build."; \
-		exit 1; \
-	fi
-	@echo "Binary size: $$(stat -c%s $@) bytes"
->>>>>>> origin/main
 
 build: all
 clean:
 	rm -rf $(BUILD_DIR)
-<<<<<<< HEAD
 
 .PHONY: all build clean
-=======
-.PHONY: all build clean
->>>>>>> origin/main
