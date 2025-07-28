@@ -30,52 +30,35 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC
 # Fetches existing versions for a module from Supabase
 get_existing_versions() {
     local module_name="$1"
+    # Note: Error messages from curl are redirected to stderr to keep stdout clean
     curl -s -f \
         "$SUPABASE_URL/storage/v1/object/list/ota-modules?prefix=$module_name/" \
-        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" | \
-        jq -r '.[] | .name' | \
+        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" 2>/dev/null | \
+        jq -r '.[] | .name' 2>/dev/null | \
         grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | \
         sort -V || echo ""
 }
 
-# Calculates the next semantic version with flexible handling
+# Calculates the next semantic version
 get_next_version() {
     local module_name="$1"
     local base_version="v1.1.0"
     
+    # FIX: All logging messages are redirected to stderr (>&2)
     echo -e "${BLUE}🔍 Determining next version for '$module_name'...${NC}" >&2
     local latest_version=$(get_existing_versions "$module_name" | tail -n 1)
 
     if [ -z "$latest_version" ]; then
         echo -e "${GREEN}📦 No previous versions found. Starting with $base_version.${NC}" >&2
-        echo "$base_version"
+        echo "$base_version" # This is the actual return value to stdout
         return
     fi
 
-    # Parse the latest version
-    if [[ $latest_version =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-        local major="${BASH_REMATCH[1]}"
-        local minor="${BASH_REMATCH[2]}"
-        local patch="${BASH_REMATCH[3]}"
-        
-        # Flexible version increment: try minor version bump first, then patch
-        local next_minor_version="v${major}.$((minor + 1)).0"
-        local next_patch_version="v${major}.${minor}.$((patch + 1))"
-        
-        # Check if minor bump version exists, if not use it, otherwise use patch bump
-        local existing_minor=$(get_existing_versions "$module_name" | grep -F "$next_minor_version" || echo "")
-        if [ -z "$existing_minor" ]; then
-            echo -e "${GREEN}📦 Latest version is $latest_version. Next version will be $next_minor_version.${NC}" >&2
-            echo "$next_minor_version"
-        else
-            echo -e "${GREEN}📦 Latest version is $latest_version. Next version will be $next_patch_version.${NC}" >&2
-            echo "$next_patch_version"
-        fi
-    else
-        # Fallback to base version if parsing fails
-        echo -e "${YELLOW}⚠️  Could not parse latest version '$latest_version'. Using $base_version.${NC}" >&2
-        echo "$base_version"
-    fi
+    IFS='.' read -r major minor patch <<< "${latest_version//v/}"
+    local next_patch=$((patch + 1))
+    local next_version="v${major}.${minor}.${next_patch}"
+    echo -e "${GREEN}📦 Latest version is $latest_version. Next version will be $next_version.${NC}" >&2
+    echo "$next_version" # This is the actual return value to stdout
 }
 
 # Uploads a file, handling potential conflicts for mutable files
@@ -85,48 +68,29 @@ upload_file() {
     local content_type="$3"
     local allow_overwrite="$4"
 
-    # Check if local file exists before attempting upload
-    if [ ! -f "$local_path" ]; then
-        echo -e "${RED}❌ Local file does not exist: $local_path${NC}" >&2
-        return 1
-    fi
-
-    echo -e "${YELLOW}☁️  Uploading:${NC} $local_path -> $remote_path"
+    # FIX: All logging messages are redirected to stderr (>&2)
+    echo -e "${YELLOW}☁️  Uploading:${NC} $local_path -> $remote_path" >&2
     local method="POST"
     local success_msg="✅ Successfully uploaded (new)."
     
-    # Check if we should try to overwrite
     if [ "$allow_overwrite" = "true" ]; then
         method="PUT"
         success_msg="✅ Successfully updated (overwritten)."
     fi
 
-    # Use a temporary file to capture the full response
-    local temp_response=$(mktemp)
     local http_code=$(curl -s -w "%{http_code}" \
         -X "$method" \
         "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
         -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
         -H "Content-Type: $content_type" \
-        --data-binary "@$local_path" \
-        -o "$temp_response")
+        --data-binary "@$local_path")
     
-    # Clean up temp file
-    rm -f "$temp_response"
-
-    # Validate http_code is numeric
-    if ! [[ "$http_code" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}❌ Upload failed for $remote_path (Invalid HTTP response).${NC}" >&2
-        return 1
-    fi
-
-    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
-        echo -e "${GREEN}$success_msg${NC}"
+    if [ "$http_code" -eq 200 ]; then
+        echo -e "${GREEN}$success_msg${NC}" >&2
         return 0
     else
-        # If POST failed with 409 and we allow overwrite, try PUT
         if [ "$method" = "POST" ] && [ "$http_code" -eq 409 ] && [ "$allow_overwrite" = "true" ]; then
-             echo -e "${YELLOW}📝 File exists. Attempting to overwrite with PUT...${NC}"
+             echo -e "${YELLOW}📝 File exists. Attempting to overwrite with PUT...${NC}" >&2
              upload_file "$local_path" "$remote_path" "$content_type" "true"
              return $?
         fi
@@ -136,23 +100,18 @@ upload_file() {
 }
 
 # Builds a module and uploads its artifacts
-# Builds a module and uploads its artifacts
 deploy_module() {
     local module_name="$1"
     local module_path="$PROJECT_ROOT/mock_drivers/$module_name"
     
-    echo -e "\n${BLUE}--- Processing Module: $module_name ---${NC}"
+    echo -e "\n${BLUE}--- Processing Module: $module_name ---${NC}" >&2
     cd "$module_path"
 
-    # --- BUILD STEP with ROBUST ERROR HANDLING ---
-    echo "🔨 Building binary..."
-    
-    # Capture the output and the exit code of the make command
+    echo "🔨 Building binary..." >&2
     local build_output
     build_output=$( (make clean && make build) 2>&1 )
     local build_result=$?
     
-    # Check if the build failed
     if [ $build_result -ne 0 ]; then
         echo -e "${RED}❌ Build failed for module '$module_name'.${NC}" >&2
         echo -e "${YELLOW}--- Build Log ---${NC}" >&2
@@ -160,31 +119,27 @@ deploy_module() {
         echo -e "${YELLOW}--- End Build Log ---${NC}" >&2
         return 1
     fi
-    
     local binary_path="build/$module_name.bin"
-    # Verify the binary file was actually created
     if [ ! -f "$binary_path" ]; then
-        echo -e "${RED}❌ Build succeeded, but binary file was not found at '$binary_path'.${NC}" >&2
+        echo -e "${RED}❌ Build succeeded, but binary file was not found.${NC}" >&2
         return 1
     fi
-    echo -e "${GREEN}✅ Build successful.${NC}"
+    echo -e "${GREEN}✅ Build successful.${NC}" >&2
 
-    # --- METADATA AND DEPLOYMENT ---
-    # This part now only runs if the build was successful.
     local version=$(get_next_version "$module_name")
     local hash=$(sha256sum "$binary_path" | cut -d' ' -f1)
     local size=$(stat -c%s "$binary_path")
 
-    echo "☁️  Uploading immutable versioned artifact ($version)..."
+    echo "☁️  Uploading immutable versioned artifact ($version)..." >&2
     if ! upload_file "$binary_path" "$module_name/$version/$module_name.bin" "application/octet-stream" "false"; then return 1; fi
 
-    echo "☁️  Updating mutable 'latest' pointer..."
+    echo "☁️  Updating mutable 'latest' pointer..." >&2
     if ! upload_file "$binary_path" "$module_name/latest/$module_name.bin" "application/octet-stream" "true"; then return 1; fi
 
-    echo -e "${GREEN}🎉 Module '$module_name' deployed to cloud successfully!${NC}"
+    echo -e "${GREEN}🎉 Module '$module_name' deployed to cloud successfully!${NC}" >&2
     cd "$PROJECT_ROOT"
     
-    # Output metadata for the manifest update
+    # Output metadata to stdout for capture
     echo "$module_name:$version:$hash:$size"
 }
 
@@ -194,13 +149,13 @@ update_manifest() {
     IFS=':' read -r module_name version hash size <<< "$metadata"
     local manifest_path="temp_manifest.json"
 
-    echo -e "\n${BLUE}--- Updating Master Manifest ---${NC}"
-    echo "📥 Downloading current manifest..."
+    echo -e "\n${BLUE}--- Updating Master Manifest ---${NC}" >&2
+    echo "📥 Downloading current manifest..." >&2
     curl -s -f -o "$manifest_path" \
         "$SUPABASE_URL/storage/v1/object/ota-modules/manifest.json" \
         -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" || echo "{}" > "$manifest_path"
 
-    echo "✍️  Updating entry for '$module_name' to $version..."
+    echo "✍️  Updating entry for '$module_name' to $version..." >&2
     jq \
       --arg module "$module_name" --arg ver "$version" --arg sha256 "$hash" --argjson sz "$size" \
       '.[$module] = { latest_version: $ver, sha256: $sha256, file_size: $sz }' \
@@ -211,7 +166,7 @@ update_manifest() {
         return 1
     fi
     
-    echo -e "${GREEN}✅ Manifest updated successfully.${NC}"
+    echo -e "${GREEN}✅ Manifest updated successfully.${NC}" >&2
     rm -f "$manifest_path"
 }
 
@@ -225,11 +180,11 @@ main() {
     done
 
     if [ ${#modules_to_build[@]} -eq 0 ]; then
-        echo "✅ No changes in module directories. Nothing to deploy."
+        echo "✅ No changes in module directories. Nothing to deploy." >&2
         exit 0
     fi
 
-    echo "📦 Found changes in modules: ${!modules_to_build[@]}"
+    echo "📦 Found changes in modules: ${!modules_to_build[@]}" >&2
     for module in "${!modules_to_build[@]}"; do
         if module_metadata=$(deploy_module "$module"); then
             update_manifest "$module_metadata"
@@ -238,7 +193,7 @@ main() {
             exit 1
         fi
     done
-    echo -e "\n${GREEN}🎉 All changed modules deployed and manifest updated successfully!${NC}"
+    echo -e "\n${GREEN}🎉 All changed modules deployed and manifest updated successfully!${NC}" >&2
 }
 
 # --- Entry Point ---
