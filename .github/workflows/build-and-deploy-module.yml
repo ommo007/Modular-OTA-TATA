@@ -35,15 +35,31 @@ jobs:
       - name: '🛠️ Setup ESP32 Toolchain'
         if: steps.changed_files.outputs.any_changed == 'true'
         run: |
+          echo "Installing ESP32 toolchain dependencies..."
           sudo apt-get update
           sudo apt-get install -y wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0 jq
-          mkdir -p ~/.espressif
-          cd ~/.espressif
+          
+          echo "Downloading and installing ESP32 toolchain..."
+          cd /tmp
           wget https://dl.espressif.com/dl/xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
           tar -xzf xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
-          echo "$HOME/.espressif/xtensa-esp32-elf/bin" >> $GITHUB_PATH
-          export PATH="$HOME/.espressif/xtensa-esp32-elf/bin:$PATH"
+          sudo mv xtensa-esp32-elf /opt/
+          
+          echo "Adding toolchain to PATH..."
+          echo "/opt/xtensa-esp32-elf/bin" >> $GITHUB_PATH
+          
+          echo "Verifying toolchain installation..."
+          export PATH="/opt/xtensa-esp32-elf/bin:$PATH"
+          which xtensa-esp32-elf-gcc
           xtensa-esp32-elf-gcc --version
+
+      - name: '🔧 Verify Toolchain Setup'
+        if: steps.changed_files.outputs.any_changed == 'true'
+        run: |
+          echo "Final toolchain verification..."
+          which xtensa-esp32-elf-gcc || (echo "❌ Toolchain not found in PATH" && exit 1)
+          xtensa-esp32-elf-gcc --version
+          echo "✅ Toolchain setup verified"
 
       - name: '🔐 Validate Environment Variables'
         if: steps.changed_files.outputs.any_changed == 'true'
@@ -58,6 +74,59 @@ jobs:
         if: steps.changed_files.outputs.any_changed == 'true'
         run: |
           chmod +x ./scripts/deploy-to-supabase.sh
+
+      - name: '🏗️ Build Changed Modules'
+        if: steps.changed_files.outputs.any_changed == 'true'
+        run: |
+          echo "🔍 Building changed modules..."
+          echo "Changed files: ${{ steps.changed_files.outputs.all_changed_files }}"
+          
+          # Extract unique module directories from changed files
+          changed_modules=$(echo "${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -E '^mock_drivers/[^/]+/' | sed 's|mock_drivers/\([^/]*\)/.*|\1|' | sort -u)
+          
+          if [ -z "$changed_modules" ]; then
+            echo "❌ No valid module directories found in changed files"
+            exit 1
+          fi
+          
+          echo "📦 Modules to build:"
+          echo "$changed_modules" | while read module; do
+            echo "  • $module"
+          done
+          
+          # Build each changed module
+          build_success=true
+          echo "$changed_modules" | while read module; do
+            if [ -n "$module" ] && [ -d "mock_drivers/$module" ]; then
+              echo "🔨 Building module: $module"
+              cd "mock_drivers/$module"
+              
+              # Check if Makefile exists
+              if [ ! -f "Makefile" ]; then
+                echo "⚠️  Warning: No Makefile found for $module, skipping..."
+                cd ../..
+                continue
+              fi
+              
+              # Build the module
+              if make clean && make build; then
+                echo "✅ Successfully built: $module"
+              else
+                echo "❌ Failed to build: $module"
+                build_success=false
+              fi
+              cd ../..
+            else
+              echo "⚠️  Warning: Module directory not found: mock_drivers/$module"
+            fi
+          done
+          
+          if [ "$build_success" = false ]; then
+            echo "❌ One or more modules failed to build"
+            exit 1
+          fi
+          
+          echo "✅ All modules built successfully"
 
       - name: '🚀 Deploy Modules with Auto-Versioning'
         id: deploy
@@ -82,14 +151,14 @@ jobs:
           echo "=========================================="
           if [ "${{ steps.changed_files.outputs.any_changed }}" == 'true' ]; then
             if [ "${{ job.status }}" == "success" ]; then
-              echo "✅ SUCCESS: All changed modules deployed successfully"
+              echo "✅ SUCCESS: All changed modules built and deployed successfully"
               echo "🔗 Supabase Storage: ${{ env.SUPABASE_URL }}/dashboard/project/_/storage/buckets/ota-modules"
               echo "📦 Changed Files:"
               echo "${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' '\n' | while read file; do
                 echo "  • $file"
               done
             else
-              echo "❌ FAILED: Deployment encountered errors"
+              echo "❌ FAILED: Build or deployment encountered errors"
             fi
           else
             echo "ℹ️ No module changes detected"
