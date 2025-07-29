@@ -36,19 +36,14 @@ jobs:
           echo "Installing ESP32 toolchain dependencies..."
           sudo apt-get update
           sudo apt-get install -y wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0 jq
-          
           echo "Downloading and installing ESP32 toolchain..."
           cd /tmp
           wget https://dl.espressif.com/dl/xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
           tar -xzf xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
           sudo mv xtensa-esp32-elf /opt/
-          
-          echo "Adding toolchain to PATH..."
           echo "/opt/xtensa-esp32-elf/bin" >> $GITHUB_PATH
-          
           echo "Verifying toolchain installation..."
           export PATH="/opt/xtensa-esp32-elf/bin:$PATH"
-          which xtensa-esp32-elf-gcc
           xtensa-esp32-elf-gcc --version
 
       - name: '🔧 Verify Toolchain Setup'
@@ -56,7 +51,6 @@ jobs:
         run: |
           echo "Final toolchain verification..."
           which xtensa-esp32-elf-gcc || (echo "❌ Toolchain not found in PATH" && exit 1)
-          xtensa-esp32-elf-gcc --version
           echo "✅ Toolchain setup verified"
 
       - name: '🔐 Validate Environment Variables'
@@ -78,40 +72,35 @@ jobs:
         if: steps.changed_files.outputs.any_changed == 'true'
         run: |
           echo "Changed files: ${{ steps.changed_files.outputs.all_changed_files }}"
-          
-          # Extract unique module directories from changed files
           changed_modules=$(echo "${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -E '^mock_drivers/[^/]+/' | sed 's|mock_drivers/\([^/]*\)/.*|\1|' | sort -u)
           
           if [ -z "$changed_modules" ]; then
             echo "✅ No module directories were changed. Nothing to do."
+            # Set output to false so the next job is skipped
+            echo "any_modules_deployed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           
           echo "📦 Modules to process:"
           echo "$changed_modules"
-          
           build_or_deploy_failed=false
           
-          # Loop through and process each module
           echo "$changed_modules" | while read module; do
             echo "--- Processing Module: $module ---"
-            
-            # 1. Build the module
             echo "🔨 Building module: $module"
             if ! make -C "mock_drivers/$module" clean || ! make -C "mock_drivers/$module" build; then
               echo "❌ Build failed for: $module"
               build_or_deploy_failed=true
-              continue # Skip to the next module
+              continue
             fi
             echo "✅ Build successful for: $module"
 
-            # 2. Deploy the module
             binary_path="mock_drivers/$module/build/$module.bin"
             echo "🚀 Deploying module: $module from $binary_path"
             if ! ./scripts/deploy-to-supabase.sh "$module" "$binary_path"; then
               echo "❌ Deployment failed for: $module"
               build_or_deploy_failed=true
-              continue # Skip to the next module
+              continue
             fi
             echo "✅ Deployment successful for: $module"
           done
@@ -144,19 +133,30 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-deploy
     if: success() && needs.build-and-deploy.outputs.any_modules_deployed == 'true'
+
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      SUPABASE_BUCKET: 'ota-modules'
+
     steps:
       - name: '✅ Validate Manifest Accessibility'
         run: |
-          echo "🔍 Checking if manifest is accessible..."
-          # Give storage a moment to become consistent
+          echo "🔍 Checking if manifest is accessible using authenticated endpoint..."
           sleep 5 
-          if curl --fail -s -H "Authorization: Bearer ${{ env.SUPABASE_SERVICE_KEY }}" "${{ env.SUPABASE_URL }}/storage/v1/object/public/$SUPABASE_BUCKET/manifest.json" > /dev/null; then
-            echo "✅ Manifest is accessible and valid."
+          
+          MANIFEST_URL="${{ env.SUPABASE_URL }}/storage/v1/object/${{ env.SUPABASE_BUCKET }}/manifest.json"
+          echo "Requesting URL: $MANIFEST_URL"
+
+          http_code=$(curl -s --head -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ env.SUPABASE_SERVICE_KEY }}" \
+            "$MANIFEST_URL" -o /dev/null)
+
+          if [ "$http_code" -eq 200 ]; then
+            echo "✅ Manifest is accessible (HTTP 200)."
+            echo "🎉 Deployment validation completed successfully."
           else
-            echo "❌ ERROR: Manifest is not accessible. Please check Supabase storage."
+            echo "❌ ERROR: Manifest is not accessible. Received HTTP status: $http_code."
+            echo "Please check the Supabase bucket name, permissions, and that the manifest.json was uploaded by the previous job."
             exit 1
           fi
-          echo "🎉 Deployment validation completed successfully."
