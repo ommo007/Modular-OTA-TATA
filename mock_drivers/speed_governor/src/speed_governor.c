@@ -3,13 +3,13 @@
 
 // Module metadata - UPDATED VERSION
 #define MODULE_NAME "speed_governor"
-#define MODULE_VERSION "1.1.2"  // Updated version
+#define MODULE_VERSION "1.1.0"  // Updated version
 
 // Global system API pointer
 static SystemAPI* sys_api = NULL;
 
 // Speed governor state
-static int current_speed_limit = 70;  // Default still 40 km/h for city
+static int current_speed_limit = 40;  // Default still 40 km/h for city
 static int override_speed_limit = -1; // -1 means no override
 static bool speed_limiting_active = true;
 static int highway_speed_limit = 100; // NEW: Highway speed limit
