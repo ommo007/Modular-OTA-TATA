@@ -26,7 +26,7 @@ LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT) -lgcc -lm
 .PHONY: all build clean
 
 # Default build target
-all: $(BUILD_DIR)/$(LDSCRIPT) $(BUILD_DIR)/$(MODULE_NAME).bin
+all: $(BUILD_DIR)/$(MODULE_NAME).bin
 
 # Ensure build directory exists
 $(BUILD_DIR):
@@ -46,12 +46,12 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Link ELF binary
-$(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT) | $(BUILD_DIR)
+$(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT)
 	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
 	$(SIZE) $@
 
 # Generate raw binary
-$(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf | $(BUILD_DIR)
+$(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf
 	$(OBJCOPY) -O binary $< $@
 	@echo "Binary size: $$(stat -f%z $@) bytes"
 	@echo "VERSION: This is the updated v1.1.1 that fixes highway speed limit issue"
