@@ -23,8 +23,10 @@ CFLAGS = -Os -mlongcalls -ffunction-sections -fdata-sections \
 
 LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT) -lgcc -lm
 
+.PHONY: all build clean
+
 # Default build target
-all: $(BUILD_DIR)/$(MODULE_NAME).bin
+all: $(BUILD_DIR) $(BUILD_DIR)/$(MODULE_NAME).bin
 
 # Ensure build directory exists
 $(BUILD_DIR):
@@ -59,5 +61,3 @@ build: $(BUILD_DIR)/$(MODULE_NAME).bin
 
 clean:
 	rm -rf $(BUILD_DIR)
-
-.PHONY: all build clean
