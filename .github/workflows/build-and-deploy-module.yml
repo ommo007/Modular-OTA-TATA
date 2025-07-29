@@ -39,14 +39,19 @@ jobs:
           
           echo "Downloading and installing ESP32 toolchain..."
           cd /tmp
-          wget https://dl.espressif.com/dl/xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
+          wget -q https://dl.espressif.com/dl/xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
           tar -xzf xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
           sudo mv xtensa-esp32-elf /opt/
           
-          echo "Adding toolchain to PATH..."
+          echo "Adding toolchain to PATH for future steps..."
           echo "/opt/xtensa-esp32-elf/bin" >> $GITHUB_PATH
           
+          # Manually add to PATH for the CURRENT step
+          echo "Exporting toolchain to current PATH..."
+          export PATH="/opt/xtensa-esp32-elf/bin:$PATH"
+          
           echo "Verifying toolchain installation..."
+          # This verification will now succeed
           xtensa-esp32-elf-gcc --version
 
       - name: '🔧 Prepare Deployment Script'
@@ -148,4 +153,5 @@ jobs:
           else
             echo "❌ ERROR: Manifest is not accessible. Received HTTP status: $http_code."
             exit 1
-          fi
+          fi```
+
