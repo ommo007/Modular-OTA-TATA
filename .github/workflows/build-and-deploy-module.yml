@@ -46,12 +46,10 @@ jobs:
           echo "Adding toolchain to PATH for future steps..."
           echo "/opt/xtensa-esp32-elf/bin" >> $GITHUB_PATH
           
-          # Manually add to PATH for the CURRENT step
           echo "Exporting toolchain to current PATH..."
           export PATH="/opt/xtensa-esp32-elf/bin:$PATH"
           
           echo "Verifying toolchain installation..."
-          # This verification will now succeed
           xtensa-esp32-elf-gcc --version
 
       - name: '🔧 Prepare Deployment Script'
@@ -79,7 +77,8 @@ jobs:
           echo "$changed_modules" | while read module; do
             echo "--- Processing Module: $module ---"
             echo "🔨 Building module..."
-            if ! make -C "mock_drivers/$module" clean || ! make -C "mock_drivers/$module" build; then
+            # Use make clean && make build to ensure a fresh build
+            if ! (make -C "mock_drivers/$module" clean && make -C "mock_drivers/$module" build); then
               echo "❌ Build failed for: $module"
               overall_status=1
               continue
@@ -104,6 +103,7 @@ jobs:
             echo "✅ Successfully processed module: $module"
           done
           
+          # ***** FIX #3: Check status AFTER the loop and fail the step if needed *****
           if [ "$overall_status" -ne 0 ]; then
             echo "❌ One or more modules failed to process. Halting workflow."
             exit 1
@@ -153,5 +153,4 @@ jobs:
           else
             echo "❌ ERROR: Manifest is not accessible. Received HTTP status: $http_code."
             exit 1
-          fi```
-
+          fi

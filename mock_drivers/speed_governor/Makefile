@@ -28,6 +28,7 @@ CFLAGS = -Os -mlongcalls -ffunction-sections -fdata-sections \
 	-fPIC -nostdlib -std=c99 -Wall \
 	-I../../esp32_loader_firmware/include
 
+# Linker flags now reference the script inside the build directory
 LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT) -lgcc -lm
 
 # Cross-platform stat command
@@ -49,13 +50,11 @@ check-toolchain:
 	@which $(CC) > /dev/null || (echo "Error: $(CC) not found in PATH" && exit 1)
 	@echo "Toolchain found: $(shell which $(CC))"
 
-# Ensure build directory exists
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
-
-# Generate linker script dynamically
-$(BUILD_DIR)/$(LDSCRIPT): | $(BUILD_DIR)
+# ***** FIX #1: Make directory creation robust *****
+# This rule dynamically generates the linker script.
+$(BUILD_DIR)/$(LDSCRIPT):
 	@echo "Generating linker script..."
+	@mkdir -p $(BUILD_DIR) # Ensure build directory exists BEFORE writing to it
 	@echo "ENTRY($(ENTRY_POINT_FUNC))" > $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "SECTIONS" >> $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "{" >> $(BUILD_DIR)/$(LDSCRIPT)
@@ -63,13 +62,16 @@ $(BUILD_DIR)/$(LDSCRIPT): | $(BUILD_DIR)
 	@echo "  .rodata : { *(.rodata) }" >> $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "}" >> $(BUILD_DIR)/$(LDSCRIPT)
 
-# Compile object files
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
+# ***** FIX #2: Make compilation robust *****
+# This rule compiles C source files into object files.
+# It depends on the linker script being generated first.
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(BUILD_DIR)/$(LDSCRIPT)
 	@echo "Compiling $<..."
+	@mkdir -p $(@D) # Use automatic variable to ensure object file directory exists
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Link ELF binary
-$(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT)
+$(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS)
 	@echo "Linking ELF binary..."
 	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
 	$(SIZE) $@
@@ -80,8 +82,8 @@ $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf
 	$(OBJCOPY) -O binary $< $@
 	@echo "Binary size: $$($(STAT_SIZE) $@) bytes"
 
-# Targets for GitHub Actions
-build: check-toolchain $(BUILD_DIR)/$(LDSCRIPT) $(BUILD_DIR)/$(MODULE_NAME).bin
+# Target for GitHub Actions - ensure it depends on the final binary
+build: $(BUILD_DIR)/$(MODULE_NAME).bin
 
 clean:
 	rm -rf $(BUILD_DIR)
