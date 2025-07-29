@@ -26,7 +26,7 @@ LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT) -lgcc -lm
 .PHONY: all build clean
 
 # Default build target
-all: $(BUILD_DIR) $(BUILD_DIR)/$(MODULE_NAME).bin
+all: $(BUILD_DIR)/$(LDSCRIPT) $(BUILD_DIR)/$(MODULE_NAME).bin
 
 # Ensure build directory exists
 $(BUILD_DIR):
@@ -58,7 +58,7 @@ $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf | $(BUILD_DIR)
 
 
 # Targets for GitHub Actions
-build: all
+build: $(BUILD_DIR)/$(LDSCRIPT) $(BUILD_DIR)/$(MODULE_NAME).bin
 
 clean:
 	rm -rf $(BUILD_DIR)
