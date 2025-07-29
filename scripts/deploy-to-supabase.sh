@@ -103,7 +103,7 @@ deploy_module() {
 
     local version=$(get_next_version "$module_name")
     local hash=$(sha256sum "$binary_path" | cut -d' ' -f1)
-    local size=$(stat -c%s "$binary_path")
+    local size=$(stat -f%z "$binary_path")
 
     # Construct the new, flat versioned filename
     local versioned_filename="${module_name}-v${version}.bin"
