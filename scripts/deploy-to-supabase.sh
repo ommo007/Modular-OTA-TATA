@@ -100,6 +100,7 @@ deploy_module() {
     echo "📂 Verifying contents of $module_path/src:"
     ls -l src || echo "❌ src directory not found!"
 
+    mkdir -p build
     echo "🔨 Building binary..." >&2
     if ! make clean && make build; then echo -e "${RED}❌ Build failed.${NC}" >&2; return 1; fi
     local binary_path="build/$module_name.bin"
