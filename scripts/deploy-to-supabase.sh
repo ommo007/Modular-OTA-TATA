@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Deploys a pre-built binary to Supabase.
+# Now with verbose logging to debug upload issues.
 #
 # Arguments:
 #   $1: The module name (e.g., "speed_governor")
@@ -38,7 +39,7 @@ get_file_size() {
     stat -c%s "$1"
 }
 
-# Uploads a file with retries
+# Uploads a file with retries AND verbose logging
 upload_file() {
     local local_path="$1"
     local remote_path="$2"
@@ -47,18 +48,25 @@ upload_file() {
 
     echo -e "${YELLOW}☁️  Uploading: '$local_path' to '$remote_path'...${NC}" >&2
     while [ $attempt -le $UPLOAD_RETRIES ]; do
-        http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        # ***** CHANGE HERE: ADDED -v (verbose) and --fail flags *****
+        # -v: Prints all network details for debugging.
+        # --fail: Makes curl return a non-zero exit code on HTTP 4xx/5xx errors,
+        #         which will be caught by 'set -e'.
+        echo "Attempt $attempt..."
+        curl -v --fail \
             -X POST "$SUPABASE_URL/storage/v1/object/$SUPABASE_BUCKET/$remote_path" \
             -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
             -H "Content-Type: $content_type" \
-            -H "x-upsert: true" \ # Use upsert to allow overwriting latest.bin and manifest.json
-            --data-binary "@$local_path")
-
-        if [ "$http_code" -eq 200 ]; then
-            echo -e "${GREEN}✅ Upload successful (HTTP $http_code).${NC}" >&2
+            -H "x-upsert: true" \
+            --data-binary "@$local_path"
+        
+        # Check the exit code of the curl command
+        CURL_EXIT_CODE=$?
+        if [ "$CURL_EXIT_CODE" -eq 0 ]; then
+            echo -e "${GREEN}✅ Upload successful.${NC}" >&2
             return 0
         else
-            echo -e "${RED}⚠️ Upload attempt $attempt failed (HTTP $http_code). Retrying in $RETRY_DELAY seconds...${NC}" >&2
+            echo -e "${RED}⚠️ Upload attempt $attempt failed with exit code $CURL_EXIT_CODE. Retrying in $RETRY_DELAY seconds...${NC}" >&2
             sleep $RETRY_DELAY
         fi
         ((attempt++))
@@ -93,7 +101,7 @@ update_manifest() {
     local manifest_path="manifest.json"
 
     echo -e "\n${BLUE}--- Updating Master Manifest ---${NC}" >&2
-
+    
     # Download existing manifest or create an empty one
     curl -s -f -o "$manifest_path" \
         "$SUPABASE_URL/storage/v1/object/public/$SUPABASE_BUCKET/manifest.json" \
@@ -118,7 +126,6 @@ update_manifest() {
 main() {
     echo -e "\n${BLUE}--- Deploying Module: $MODULE_NAME ---${NC}"
 
-    # 1. Determine version and metadata
     local version=$(get_next_version)
     local hash=$(sha256sum "$LOCAL_BINARY_PATH" | cut -d' ' -f1)
     local size=$(get_file_size "$LOCAL_BINARY_PATH")
@@ -126,17 +133,17 @@ main() {
     
     echo "📦 Version: v$version | Size: $size bytes | SHA256: $hash"
 
-    # 2. Upload the new, immutable versioned binary
+    # Upload the new, immutable versioned binary
     if ! upload_file "$LOCAL_BINARY_PATH" "$MODULE_NAME/$versioned_filename" "application/octet-stream"; then 
         exit 1
     fi
 
-    # 3. Upload the same binary as the mutable 'latest' pointer
+    # Upload the same binary as the mutable 'latest' pointer
     if ! upload_file "$LOCAL_BINARY_PATH" "$MODULE_NAME/latest.bin" "application/octet-stream"; then 
         exit 1
     fi
 
-    # 4. Update the master manifest file
+    # Update the master manifest file
     local module_metadata="$MODULE_NAME:$version:$hash:$size"
     if ! update_manifest "$module_metadata"; then
         exit 1

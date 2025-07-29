@@ -58,10 +58,7 @@ jobs:
         id: deploy
         if: steps.changed_files.outputs.any_changed == 'true'
         run: |
-          # Use a variable to track if any deployment actually happened
           deployed_something=false
-          
-          # Extract unique module names from the file paths
           changed_modules=$(echo "${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -oP 'mock_drivers/\K[^/]+' | sort -u)
           
           if [ -z "$changed_modules" ]; then
@@ -72,22 +69,17 @@ jobs:
           
           echo "📦 Modules to process:"
           echo "$changed_modules"
-          
-          # This variable will be set to 1 if any step fails
           overall_status=0
           
           echo "$changed_modules" | while read module; do
             echo "--- Processing Module: $module ---"
-            
-            # 1. Build the module using make's -C flag (no need to cd)
             echo "🔨 Building module..."
             if ! make -C "mock_drivers/$module" clean || ! make -C "mock_drivers/$module" build; then
               echo "❌ Build failed for: $module"
               overall_status=1
-              continue # Skip to the next module
+              continue
             fi
             
-            # 2. CRITICAL: Verify the binary exists before trying to deploy
             binary_path="mock_drivers/$module/build/$module.bin"
             echo "✅ Build successful. Verifying binary at: $binary_path"
             if [ ! -f "$binary_path" ]; then
@@ -96,7 +88,6 @@ jobs:
                 continue
             fi
 
-            # 3. Deploy the verified binary
             echo "🚀 Deploying module: $module"
             if ! ./scripts/deploy-to-supabase.sh "$module" "$binary_path"; then
               echo "❌ Deployment script failed for: $module"
@@ -104,7 +95,6 @@ jobs:
               continue
             fi
             
-            # If we got this far, a successful deployment occurred
             deployed_something=true
             echo "✅ Successfully processed module: $module"
           done
@@ -114,7 +104,6 @@ jobs:
             exit 1
           fi
           
-          # Set the final output for the next job
           echo "any_modules_deployed=$deployed_something" >> "$GITHUB_OUTPUT"
           echo "✅ All changed modules processed successfully."
 
@@ -138,24 +127,17 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-deploy
     if: success() && needs.build-and-deploy.outputs.any_modules_deployed == 'true'
-
     env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
       SUPABASE_BUCKET: 'ota-modules'
-
     steps:
       - name: '✅ Validate Manifest Accessibility'
         run: |
           echo "🔍 Checking if manifest is accessible using authenticated endpoint..."
-          # Give storage a moment to become consistent after the final upload
           sleep 5 
           
-          # This is the correct URL for accessing an object with a service key
           MANIFEST_URL="${{ env.SUPABASE_URL }}/storage/v1/object/${{ env.SUPABASE_BUCKET }}/manifest.json"
           echo "Requesting URL: $MANIFEST_URL"
 
-          # Use curl's --head and -w to efficiently check the status without downloading the body
           http_code=$(curl -s --head -w "%{http_code}" \
             -H "Authorization: Bearer ${{ env.SUPABASE_SERVICE_KEY }}" \
             "$MANIFEST_URL" -o /dev/null)
@@ -165,6 +147,5 @@ jobs:
             echo "🎉 Deployment validation completed successfully."
           else
             echo "❌ ERROR: Manifest is not accessible. Received HTTP status: $http_code."
-            echo "Please check the Supabase bucket name, RLS policies, and that the manifest.json was uploaded."
             exit 1
           fi
