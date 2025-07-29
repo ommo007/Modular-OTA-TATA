@@ -33,26 +33,35 @@ jobs:
       - name: '🛠️ Setup ESP32 Toolchain & Dependencies'
         if: steps.changed_files.outputs.any_changed == 'true'
         run: |
+          echo "Installing workflow dependencies..."
           sudo apt-get update
           sudo apt-get install -y wget jq
+          
+          echo "Downloading and installing ESP32 toolchain..."
           cd /tmp
           wget https://dl.espressif.com/dl/xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
           tar -xzf xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
           sudo mv xtensa-esp32-elf /opt/
+          
+          echo "Adding toolchain to PATH..."
           echo "/opt/xtensa-esp32-elf/bin" >> $GITHUB_PATH
+          
+          echo "Verifying toolchain installation..."
           xtensa-esp32-elf-gcc --version
 
       - name: '🔧 Prepare Deployment Script'
         if: steps.changed_files.outputs.any_changed == 'true'
-        run: chmod +x ./scripts/deploy-to-supabase.sh
+        run: |
+          chmod +x ./scripts/deploy-to-supabase.sh
 
       - name: '🏗️ Build & Deploy Changed Modules'
         id: deploy
         if: steps.changed_files.outputs.any_changed == 'true'
         run: |
-          # Use a variable to track if any deployment happened
+          # Use a variable to track if any deployment actually happened
           deployed_something=false
           
+          # Extract unique module names from the file paths
           changed_modules=$(echo "${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -oP 'mock_drivers/\K[^/]+' | sort -u)
           
           if [ -z "$changed_modules" ]; then
@@ -64,6 +73,7 @@ jobs:
           echo "📦 Modules to process:"
           echo "$changed_modules"
           
+          # This variable will be set to 1 if any step fails
           overall_status=0
           
           echo "$changed_modules" | while read module; do
@@ -77,7 +87,7 @@ jobs:
               continue # Skip to the next module
             fi
             
-            # 2. Verify the binary exists before trying to deploy
+            # 2. CRITICAL: Verify the binary exists before trying to deploy
             binary_path="mock_drivers/$module/build/$module.bin"
             echo "✅ Build successful. Verifying binary at: $binary_path"
             if [ ! -f "$binary_path" ]; then
@@ -94,18 +104,67 @@ jobs:
               continue
             fi
             
-            # If we got this far, a deployment happened
+            # If we got this far, a successful deployment occurred
             deployed_something=true
             echo "✅ Successfully processed module: $module"
           done
           
           if [ "$overall_status" -ne 0 ]; then
-            echo "❌ One or more modules failed to process."
+            echo "❌ One or more modules failed to process. Halting workflow."
             exit 1
           fi
           
+          # Set the final output for the next job
           echo "any_modules_deployed=$deployed_something" >> "$GITHUB_OUTPUT"
           echo "✅ All changed modules processed successfully."
 
-      # The rest of the workflow (summary and validation jobs) can remain as is.
-      # ...
+      - name: '📊 Report Deployment Summary'
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "🎯 DEPLOYMENT SUMMARY"
+          echo "=========================================="
+          if [ "${{ steps.changed_files.outputs.any_changed }}" != 'true' ]; then
+            echo "ℹ️ No module changes were detected in the push."
+          elif [ "${{ job.status }}" == "success" ]; then
+            echo "✅ SUCCESS: All changed modules were built and deployed."
+          else
+            echo "❌ FAILED: The build and deploy job encountered an error."
+          fi
+          echo "=========================================="
+
+  validate-deployment:
+    name: 'Validate Deployment'
+    runs-on: ubuntu-latest
+    needs: build-and-deploy
+    if: success() && needs.build-and-deploy.outputs.any_modules_deployed == 'true'
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      SUPABASE_BUCKET: 'ota-modules'
+
+    steps:
+      - name: '✅ Validate Manifest Accessibility'
+        run: |
+          echo "🔍 Checking if manifest is accessible using authenticated endpoint..."
+          # Give storage a moment to become consistent after the final upload
+          sleep 5 
+          
+          # This is the correct URL for accessing an object with a service key
+          MANIFEST_URL="${{ env.SUPABASE_URL }}/storage/v1/object/${{ env.SUPABASE_BUCKET }}/manifest.json"
+          echo "Requesting URL: $MANIFEST_URL"
+
+          # Use curl's --head and -w to efficiently check the status without downloading the body
+          http_code=$(curl -s --head -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ env.SUPABASE_SERVICE_KEY }}" \
+            "$MANIFEST_URL" -o /dev/null)
+
+          if [ "$http_code" -eq 200 ]; then
+            echo "✅ Manifest is accessible (HTTP 200)."
+            echo "🎉 Deployment validation completed successfully."
+          else
+            echo "❌ ERROR: Manifest is not accessible. Received HTTP status: $http_code."
+            echo "Please check the Supabase bucket name, RLS policies, and that the manifest.json was uploaded."
+            exit 1
+          fi
