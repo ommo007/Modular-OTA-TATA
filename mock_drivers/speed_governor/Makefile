@@ -52,7 +52,7 @@ $(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT) | $(BUILD_D
 $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf | $(BUILD_DIR)
 	$(OBJCOPY) -O binary $< $@
 	@echo "Binary size: $$(stat -f%z $@) bytes"
-	@echo "VERSION: This is the updated v1.1.0 that fixes highway speed limit issue"
+	@echo "VERSION: This is the updated v1.1.1 that fixes highway speed limit issue"
 
 # Targets for GitHub Actions
 build: $(BUILD_DIR)/$(MODULE_NAME).bin
