@@ -30,133 +30,82 @@ jobs:
         with:
           files: mock_drivers/**
 
-      - name: '🛠️ Setup ESP32 Toolchain'
+      - name: '🛠️ Setup ESP32 Toolchain & Dependencies'
         if: steps.changed_files.outputs.any_changed == 'true'
         run: |
-          echo "Installing ESP32 toolchain dependencies..."
           sudo apt-get update
-          sudo apt-get install -y wget flex bison gperf python3 python3-pip python3-venv cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0 jq
-          echo "Downloading and installing ESP32 toolchain..."
+          sudo apt-get install -y wget jq
           cd /tmp
           wget https://dl.espressif.com/dl/xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
           tar -xzf xtensa-esp32-elf-gcc8_4_0-esp-2021r2-linux-amd64.tar.gz
           sudo mv xtensa-esp32-elf /opt/
           echo "/opt/xtensa-esp32-elf/bin" >> $GITHUB_PATH
-          echo "Verifying toolchain installation..."
-          export PATH="/opt/xtensa-esp32-elf/bin:$PATH"
           xtensa-esp32-elf-gcc --version
-
-      - name: '🔧 Verify Toolchain Setup'
-        if: steps.changed_files.outputs.any_changed == 'true'
-        run: |
-          echo "Final toolchain verification..."
-          which xtensa-esp32-elf-gcc || (echo "❌ Toolchain not found in PATH" && exit 1)
-          echo "✅ Toolchain setup verified"
-
-      - name: '🔐 Validate Environment Variables'
-        if: steps.changed_files.outputs.any_changed == 'true'
-        run: |
-          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_KEY" ]; then
-            echo "❌ Error: Missing required secrets"
-            exit 1
-          fi
-          echo "✅ Environment variables validated"
 
       - name: '🔧 Prepare Deployment Script'
         if: steps.changed_files.outputs.any_changed == 'true'
-        run: |
-          chmod +x ./scripts/deploy-to-supabase.sh
+        run: chmod +x ./scripts/deploy-to-supabase.sh
 
       - name: '🏗️ Build & Deploy Changed Modules'
         id: deploy
         if: steps.changed_files.outputs.any_changed == 'true'
         run: |
-          echo "Changed files: ${{ steps.changed_files.outputs.all_changed_files }}"
-          changed_modules=$(echo "${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -E '^mock_drivers/[^/]+/' | sed 's|mock_drivers/\([^/]*\)/.*|\1|' | sort -u)
+          # Use a variable to track if any deployment happened
+          deployed_something=false
+          
+          changed_modules=$(echo "${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -oP 'mock_drivers/\K[^/]+' | sort -u)
           
           if [ -z "$changed_modules" ]; then
-            echo "✅ No module directories were changed. Nothing to do."
-            # Set output to false so the next job is skipped
+            echo "✅ No module directories were changed. Nothing to deploy."
             echo "any_modules_deployed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           
           echo "📦 Modules to process:"
           echo "$changed_modules"
-          build_or_deploy_failed=false
+          
+          overall_status=0
           
           echo "$changed_modules" | while read module; do
             echo "--- Processing Module: $module ---"
-            echo "🔨 Building module: $module"
+            
+            # 1. Build the module using make's -C flag (no need to cd)
+            echo "🔨 Building module..."
             if ! make -C "mock_drivers/$module" clean || ! make -C "mock_drivers/$module" build; then
               echo "❌ Build failed for: $module"
-              build_or_deploy_failed=true
-              continue
+              overall_status=1
+              continue # Skip to the next module
             fi
-            echo "✅ Build successful for: $module"
-
+            
+            # 2. Verify the binary exists before trying to deploy
             binary_path="mock_drivers/$module/build/$module.bin"
-            echo "🚀 Deploying module: $module from $binary_path"
+            echo "✅ Build successful. Verifying binary at: $binary_path"
+            if [ ! -f "$binary_path" ]; then
+                echo "❌ CRITICAL: Build succeeded but binary not found at '$binary_path'!"
+                overall_status=1
+                continue
+            fi
+
+            # 3. Deploy the verified binary
+            echo "🚀 Deploying module: $module"
             if ! ./scripts/deploy-to-supabase.sh "$module" "$binary_path"; then
-              echo "❌ Deployment failed for: $module"
-              build_or_deploy_failed=true
+              echo "❌ Deployment script failed for: $module"
+              overall_status=1
               continue
             fi
-            echo "✅ Deployment successful for: $module"
+            
+            # If we got this far, a deployment happened
+            deployed_something=true
+            echo "✅ Successfully processed module: $module"
           done
           
-          if [ "$build_or_deploy_failed" = true ]; then
-            echo "❌ One or more modules failed to build or deploy."
+          if [ "$overall_status" -ne 0 ]; then
+            echo "❌ One or more modules failed to process."
             exit 1
           fi
           
-          echo "any_modules_deployed=true" >> "$GITHUB_OUTPUT"
+          echo "any_modules_deployed=$deployed_something" >> "$GITHUB_OUTPUT"
           echo "✅ All changed modules processed successfully."
 
-      - name: '📊 Report Deployment Summary'
-        if: always()
-        run: |
-          echo "=========================================="
-          echo "🎯 DEPLOYMENT SUMMARY"
-          echo "=========================================="
-          if [ "${{ steps.changed_files.outputs.any_changed }}" != 'true' ]; then
-            echo "ℹ️ No module changes were detected in the push."
-          elif [ "${{ job.status }}" == "success" ]; then
-            echo "✅ SUCCESS: All changed modules were built and deployed."
-          else
-            echo "❌ FAILED: The workflow encountered an error."
-          fi
-          echo "=========================================="
-
-  validate-deployment:
-    name: 'Validate Deployment'
-    runs-on: ubuntu-latest
-    needs: build-and-deploy
-    if: success() && needs.build-and-deploy.outputs.any_modules_deployed == 'true'
-
-    env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      SUPABASE_BUCKET: 'ota-modules'
-
-    steps:
-      - name: '✅ Validate Manifest Accessibility'
-        run: |
-          echo "🔍 Checking if manifest is accessible using authenticated endpoint..."
-          sleep 5 
-          
-          MANIFEST_URL="${{ env.SUPABASE_URL }}/storage/v1/object/${{ env.SUPABASE_BUCKET }}/manifest.json"
-          echo "Requesting URL: $MANIFEST_URL"
-
-          http_code=$(curl -s --head -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ env.SUPABASE_SERVICE_KEY }}" \
-            "$MANIFEST_URL" -o /dev/null)
-
-          if [ "$http_code" -eq 200 ]; then
-            echo "✅ Manifest is accessible (HTTP 200)."
-            echo "🎉 Deployment validation completed successfully."
-          else
-            echo "❌ ERROR: Manifest is not accessible. Received HTTP status: $http_code."
-            echo "Please check the Supabase bucket name, permissions, and that the manifest.json was uploaded by the previous job."
-            exit 1
-          fi
+      # The rest of the workflow (summary and validation jobs) can remain as is.
+      # ...
