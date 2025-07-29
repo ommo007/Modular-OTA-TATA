@@ -41,12 +41,12 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT)
-	$(CC) $(LDFLAGS) $(OBJECTS) -o $@
+	$(CC) $(LDFLAGS) $(OBJECTS) -lgcc -lm -o $@
 	$(SIZE) $@
 
 $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf
 	$(OBJCOPY) -O binary $< $@
-	@echo "Binary size: $$(stat -c%s $@) bytes"
+	@echo "Binary size: $$(stat -f%z $@) bytes"
 	@echo "VERSION: This is the updated v1.1.0 that fixes highway speed limit issue"
 
 build: $(BUILD_DIR)/$(MODULE_NAME).bin
