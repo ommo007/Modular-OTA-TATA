@@ -1,0 +1,104 @@
+# Generic Makefile for ESP32 Modules
+#
+# This Makefile is designed to be called from a module's directory.
+# It automatically determines the module name from the current directory.
+#
+# Example usage:
+# cd mock_drivers/distance_sensor && make -f ../Makefile.generic
+
+# --- Toolchain Configuration ---
+TOOLCHAIN_PREFIX ?= xtensa-esp32-elf-
+CC      := $(TOOLCHAIN_PREFIX)gcc
+OBJCOPY := $(TOOLCHAIN_PREFIX)objcopy
+SIZE    := $(TOOLCHAIN_PREFIX)size
+
+# --- Project Configuration ---
+MODULE_NAME   := $(notdir $(CURDIR))
+SRC_DIR       := src
+BUILD_DIR     := build
+ENTRY_POINT   := get_module_interface
+LDSCRIPT_NAME := esp32_module.ld
+
+# --- Source Files ---
+SOURCES := $(wildcard $(SRC_DIR)/*.c)
+OBJECTS := $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(SOURCES))
+
+# --- Compiler and Linker Flags ---
+CFLAGS := -Os -mlongcalls -ffunction-sections -fdata-sections \
+          -fPIC -nostdlib -std=c99 -Wall \
+          -I../../esp32_loader_firmware/include
+
+LDFLAGS := -nostdlib -Wl,--gc-sections -T$(BUILD_DIR)/$(LDSCRIPT_NAME) -lgcc -lm
+
+# --- Cross-platform Commands ---
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    STAT_SIZE = stat -f%z
+else
+    STAT_SIZE = stat -c%s
+endif
+
+# --- Phony Targets ---
+.PHONY: all build clean help check-toolchain
+
+# --- Main Targets ---
+all: build
+
+build: $(BUILD_DIR)/$(MODULE_NAME).bin
+
+# Check for toolchain at the beginning
+check-toolchain:
+ifndef TOOLCHAIN_CHECK
+    TOOLCHAIN_CHECK := $(shell which $(CC) 2>/dev/null)
+    ifeq ($(TOOLCHAIN_CHECK),)
+        $(error Toolchain '$(CC)' not found. Please install the ESP32 toolchain and ensure it's in your PATH, or set TOOLCHAIN_PREFIX.)
+    endif
+endif
+
+# Ensure build directory exists
+$(BUILD_DIR):
+	@mkdir -p $(BUILD_DIR)
+
+# Generate the linker script
+$(BUILD_DIR)/$(LDSCRIPT_NAME): | $(BUILD_DIR)
+	@echo "ENTRY($(ENTRY_POINT))" > $@
+	@echo "SECTIONS" >> $@
+	@echo "{" >> $@
+	@echo "  .text : { *(.text) }" >> $@
+	@echo "  .rodata : { *(.rodata) }" >> $@
+	@echo "}" >> $@
+
+# Compile source files into object files
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(BUILD_DIR)/$(LDSCRIPT_NAME) | $(BUILD_DIR)
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+# Link object files into an ELF file
+$(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) | check-toolchain
+	@echo "LD $@"
+	@$(CC) $(LDFLAGS) $(OBJECTS) -o $@
+	@$(SIZE) $@
+
+# Convert ELF file to a raw binary
+$(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf
+	@echo "OBJCOPY $@"
+	@$(OBJCOPY) -O binary $< $@
+	@echo "✅ Build complete: $(BUILD_DIR)/$(MODULE_NAME).bin"
+	@echo "   Size: $$($(STAT_SIZE) $@) bytes"
+
+# Clean the build directory
+clean:
+	@echo "CLEAN"
+	@rm -rf $(BUILD_DIR)
+
+# Help message
+help:
+	@echo "Usage: make -f ../Makefile.generic [target]"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all         - Build the module (default)"
+	@echo "  build       - Alias for all"
+	@echo "  clean       - Remove build artifacts"
+	@echo "  help        - Show this help message"
+	@echo ""
+	@echo "This Makefile builds the module named '$(MODULE_NAME)'."

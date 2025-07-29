@@ -1,17 +1,31 @@
 #!/bin/bash
 
-# Intelligent Deployment Script for Modular OTA System
-# - Implements a robust, flat-file versioning scheme (e.g., module-v1.1.0.bin).
-# - Uses a reliable "Delete then Post" upload strategy for mutable files.
-# - Automatically determines the next semantic version based on cloud storage.
-# - Updates the master manifest.json with authoritative metadata.
+# Improved Deployment Script for Modular OTA System
+# - Uses a robust, flat-file versioning scheme (e.g., module-v1.1.0.bin).
+# - Retries uploads to handle transient network issues.
+# - Centralized configuration and dependency checks.
+# - Clear separation of build and deployment logic.
 
 set -e
 
 # --- Configuration ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+SUPABASE_BUCKET="ota-modules"
+UPLOAD_RETRIES=3
+RETRY_DELAY=5
 
+# --- Dependency Checks ---
+if ! command -v jq &> /dev/null; then
+    echo "❌ Error: 'jq' is not installed. Please install it to continue." >&2
+    exit 1
+fi
+if ! command -v curl &> /dev/null; then
+    echo "❌ Error: 'curl' is not installed. Please install it to continue." >&2
+    exit 1
+fi
+
+# --- Environment Variable Checks ---
 if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_KEY" ]; then
     echo "❌ Error: Missing SUPABASE_URL or SUPABASE_SERVICE_KEY secrets." >&2
     exit 1
@@ -20,26 +34,19 @@ fi
 # --- Color Definitions ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
-# --- Cross-platform stat function ---
+# --- Utility Functions ---
 get_file_size() {
-    local file_path="$1"
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        stat -f%z "$file_path"
-    else
-        # Linux/Ubuntu
-        stat -c%s "$file_path"
-    fi
+    stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null || echo "N/A"
 }
 
 # --- Core Functions ---
 
-# Fetches existing versions for a module from Supabase using the new naming scheme
+# Fetches existing versions for a module from Supabase
 get_existing_versions() {
     local module_name="$1"
-    curl -s -f "$SUPABASE_URL/storage/v1/object/list/ota-modules?prefix=$module_name/" \
-        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" 2>/dev/null | \
-        jq -r '.[] | .name' 2>/dev/null | \
+    curl -s -f "$SUPABASE_URL/storage/v1/object/list/$SUPABASE_BUCKET?prefix=$module_name/" \
+        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" | \
+        jq -r '.[] | .name' | \
         grep -oE "${module_name}-v[0-9]+\.[0-9]+\.[0-9]+\.bin" | \
         sed -E "s/.*-v([0-9]+\.[0-9]+\.[0-9]+)\.bin/\1/" | \
         sort -V || echo ""
@@ -61,161 +68,106 @@ get_next_version() {
     IFS='.' read -r major minor patch <<< "$latest_version"
     local next_patch=$((patch + 1))
     local next_version="${major}.${minor}.${next_patch}"
-    echo -e "${GREEN}📦 Latest is v$latest_version. Next will be v$next_version.${NC}" >&2
+    echo -e "${GREEN}📦 Latest version is v$latest_version. Next will be v$next_version.${NC}" >&2
     echo "$next_version"
 }
 
-# Deletes a file if it exists.
+# Deletes a file from Supabase storage
 delete_file() {
     local remote_path="$1"
-    echo -e "${YELLOW}🗑️  Ensuring path is clear:${NC} $remote_path" >&2
-    curl -s -w "%{http_code}" -o /dev/null \
-        -X DELETE \
-        "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
-        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" > /dev/null || true
+    echo -e "${YELLOW}🗑️  Ensuring path is clear: $remote_path${NC}" >&2
+    curl -s -o /dev/null -w "%{http_code}" \
+        -X DELETE "$SUPABASE_URL/storage/v1/object/$SUPABASE_BUCKET/$remote_path" \
+        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" || true
 }
 
-# Uploads a file using a simple POST request.
+# Uploads a file with retries
 upload_file() {
     local local_path="$1"
     local remote_path="$2"
     local content_type="$3"
+    local attempt=1
 
-    echo -e "${YELLOW}☁️  Uploading:${NC} $local_path -> $remote_path" >&2
-    local http_code=$(curl -s -w "%{http_code}" -o /dev/null \
-        -X POST \
-        "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
-        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
-        -H "Content-Type: $content_type" \
-        --data-binary "@$local_path")
-    
-    if [ "$http_code" -eq 200 ]; then
-        echo -e "${GREEN}✅ Upload successful (HTTP $http_code).${NC}" >&2
-        return 0
-    else
-        echo -e "${RED}❌ Upload failed for $remote_path (HTTP $http_code).${NC}" >&2
-        return 1
-    fi
+    echo -e "${YELLOW}☁️  Uploading: $local_path -> $remote_path${NC}" >&2
+    while [ $attempt -le $UPLOAD_RETRIES ]; do
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "$SUPABASE_URL/storage/v1/object/$SUPABASE_BUCKET/$remote_path" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: $content_type" \
+            --data-binary "@$local_path")
+
+        if [ "$http_code" -eq 200 ]; then
+            echo -e "${GREEN}✅ Upload successful (HTTP $http_code).${NC}" >&2
+            return 0
+        else
+            echo -e "${RED}⚠️ Upload attempt $attempt failed (HTTP $http_code). Retrying in $RETRY_DELAY seconds...${NC}" >&2
+            sleep $RETRY_DELAY
+        fi
+        ((attempt++))
+    done
+
+    echo -e "${RED}❌ All upload attempts failed for $remote_path.${NC}" >&2
+    return 1
 }
 
-# --- DEPLOYMENT LOGIC ---
+# --- Build and Deployment Logic ---
 
-deploy_module() {
+build_module() {
     local module_name="$1"
     local module_path="$PROJECT_ROOT/mock_drivers/$module_name"
-    
-    echo -e "\n${BLUE}--- Processing Module: $module_name ---${NC}" >&2
-    
-    # Verify module directory exists
+
+    echo -e "\n${BLUE}--- Building Module: $module_name ---${NC}" >&2
     if [ ! -d "$module_path" ]; then
         echo -e "${RED}❌ Module directory not found: $module_path${NC}" >&2
         return 1
     fi
     
-    echo -e "${BLUE}📂 Current working directory: $(pwd)${NC}" >&2
-    echo -e "${BLUE}📂 Module path: $module_path${NC}" >&2
-    
     cd "$module_path"
-    echo -e "${BLUE}📂 Changed to: $(pwd)${NC}" >&2
+    echo "🧹 Cleaning previous build..." >&2
+    make clean > /dev/null 2>&1 || true
 
-    echo "📂 Verifying contents of $module_path:"
-    ls -l
-
-    # Check if src directory exists, create minimal source if missing
-    if [ ! -d "src" ]; then
-        echo -e "${YELLOW}⚠️  Creating missing src directory and minimal source file${NC}" >&2
-        mkdir -p src
-        cat > src/main.c << 'EOF'
-#include <stdint.h>
-
-typedef struct {
-    const char* name;
-    const char* version;
-    void* (*init)(void);
-    void (*cleanup)(void*);
-} module_interface_t;
-
-static void* module_init(void) {
-    return (void*)0x12345678;  // dummy pointer
-}
-
-static void module_cleanup(void* ctx) {
-    // cleanup code
-}
-
-const module_interface_t* get_module_interface(void) {
-    static const module_interface_t interface = {
-        .name = "speed_governor",
-        .version = "1.1.1",
-        .init = module_init,
-        .cleanup = module_cleanup
-    };
-    return &interface;
-}
-EOF
-    fi
-
-    echo "📂 Verifying contents of src:"
-    ls -l src/ || echo "❌ src directory access failed!"
-
-    # Ensure build directory exists
-    mkdir -p build
-    
-    echo "🔨 Building binary..." >&2
-    echo "🧹 Cleaning previous build..."
-    make clean || echo "Clean failed or nothing to clean"
-    
-    echo "🔨 Running make build..."
+    echo "🔨 Running make build..." >&2
     if ! make build; then 
-        echo -e "${RED}❌ Build command failed.${NC}" >&2
-        echo "📂 Current directory contents:"
-        ls -la
-        echo "📂 Build directory contents (if exists):"
-        ls -la build/ 2>/dev/null || echo "Build directory doesn't exist"
+        echo -e "${RED}❌ Build failed for '$module_name'.${NC}" >&2
+        cd "$PROJECT_ROOT"
         return 1
     fi
     
     local binary_path="build/$module_name.bin"
-    echo -e "${BLUE}🔍 Looking for binary at: $binary_path${NC}" >&2
-    echo -e "${BLUE}📂 Absolute path: $(pwd)/$binary_path${NC}" >&2
-    
     if [ ! -f "$binary_path" ]; then
-        echo -e "${RED}❌ Binary not found at $binary_path${NC}" >&2
-        echo "📁 Contents of build/ directory:"
-        ls -la build/ 2>/dev/null || echo "Build directory doesn't exist"
-        echo "📁 Contents of current directory:"
-        ls -la
-        echo "🔍 Searching for any .bin files:"
-        find . -name "*.bin" -type f 2>/dev/null || echo "No .bin files found"
+        echo -e "${RED}❌ Built binary not found at $binary_path${NC}" >&2
+        cd "$PROJECT_ROOT"
         return 1
     fi
     
-    echo -e "${GREEN}✅ Build successful. Binary found at: $binary_path${NC}" >&2
-    echo -e "${GREEN}📊 Binary size: $(get_file_size "$binary_path") bytes${NC}" >&2
+    echo -e "${GREEN}✅ Build successful. Binary: $binary_path (${GREEN}$(get_file_size "$binary_path") bytes${NC})" >&2
+    cd "$PROJECT_ROOT"
+    echo "$binary_path"
+}
+
+deploy_module() {
+    local module_name="$1"
+    local binary_path="$2"
+
+    echo -e "\n${BLUE}--- Deploying Module: $module_name ---${NC}" >&2
 
     local version=$(get_next_version "$module_name")
     local hash=$(sha256sum "$binary_path" | cut -d' ' -f1)
     local size=$(get_file_size "$binary_path")
-
-    # Construct the new, flat versioned filename
     local versioned_filename="${module_name}-v${version}.bin"
     
-    echo "☁️  Uploading immutable versioned artifact ($versioned_filename)..." >&2
+    echo "☁️  Uploading immutable artifact: $versioned_filename" >&2
     if ! upload_file "$binary_path" "$module_name/$versioned_filename" "application/octet-stream"; then 
-        cd "$PROJECT_ROOT"
         return 1
     fi
 
     echo "☁️  Updating mutable 'latest' pointer..." >&2
     delete_file "$module_name/latest.bin"
     if ! upload_file "$binary_path" "$module_name/latest.bin" "application/octet-stream"; then 
-        cd "$PROJECT_ROOT"
         return 1
     fi
 
-    echo -e "${GREEN}🎉 Module '$module_name' deployed to cloud successfully!${NC}" >&2
-    cd "$PROJECT_ROOT"
-    
+    echo -e "${GREEN}🎉 Module '$module_name' deployed successfully!${NC}" >&2
     echo "$module_name:$version:$hash:$size"
 }
 
@@ -225,43 +177,65 @@ update_manifest() {
     local manifest_path="temp_manifest.json"
 
     echo -e "\n${BLUE}--- Updating Master Manifest ---${NC}" >&2
-    curl -s -f -o "$manifest_path" "$SUPABASE_URL/storage/v1/object/ota-modules/manifest.json" \
-        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" || echo "{}" > "$manifest_path"
+
+    # Download existing manifest or create an empty one
+    curl -s -f -o "$manifest_path" "$SUPABASE_URL/storage/v1/object/public/$SUPABASE_BUCKET/manifest.json" \
+    -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" || echo "{}" > "$manifest_path"
 
     echo "✍️  Updating entry for '$module_name' to v$version..." >&2
     jq --arg module "$module_name" --arg ver "v$version" --arg sha256 "$hash" --argjson sz "$size" \
-      '.[$module] = { latest_version: $ver, sha256: $sha256, file_size: $sz }' \
+      '.modules[$module] = { latest_version: $ver, sha256: $sha256, file_size: $sz, updated_at: now | todate }' \
       "$manifest_path" > "$manifest_path.tmp" && mv "$manifest_path.tmp" "$manifest_path"
 
     delete_file "manifest.json"
-    if ! upload_file "$manifest_path" "manifest.json" "application/json"; then rm -f "$manifest_path"; return 1; fi
+    if ! upload_file "$manifest_path" "manifest.json" "application/json"; then
+        rm -f "$manifest_path"
+        return 1
+    fi
     
     echo -e "${GREEN}✅ Manifest updated successfully.${NC}" >&2
     rm -f "$manifest_path"
 }
 
-# --- MAIN ---
+# --- Main Execution ---
 main() {
-    declare -A modules_to_build
-    for file in $@; do
-        if [[ $file == mock_drivers/* ]]; then
-            modules_to_build[$(echo "$file" | cut -d'/' -f2)]=1
-        fi
-    done
-
-    if [ ${#modules_to_build[@]} -eq 0 ]; then
-        echo "✅ No changes in module directories. Nothing to deploy." >&2; exit 0;
+    local changed_files=("$@")
+    if [ ${#changed_files[@]} -eq 0 ]; then
+        echo "No files specified. Exiting." >&2
+        exit 0
     fi
 
-    echo "📦 Found changes in modules: ${!modules_to_build[@]}" >&2
-    for module in "${!modules_to_build[@]}"; do
-        if module_metadata=$(deploy_module "$module"); then
-            update_manifest "$module_metadata"
-        else
-            echo -e "${RED}❌ Deployment failed for module '$module'. Aborting.${NC}" >&2; exit 1;
+    declare -A modules_to_process
+    for file in "${changed_files[@]}"; do
+        if [[ $file == mock_drivers/* ]]; then
+            modules_to_process[$(basename "$(dirname "$file")")]=1
         fi
     done
-    echo -e "\n${GREEN}🎉 All changed modules deployed and manifest updated successfully!${NC}" >&2
+
+    if [ ${#modules_to_process[@]} -eq 0 ]; then
+        echo "✅ No changes in module directories. Nothing to deploy." >&2
+        exit 0
+    fi
+
+    echo "📦 Modules to process: ${!modules_to_process[@]}" >&2
+    for module in "${!modules_to_process[@]}"; do
+        local binary_path
+        if ! binary_path=$(build_module "$module"); then
+            echo -e "${RED}❌ Halting deployment due to build failure in '$module'.${NC}" >&2
+            exit 1
+        fi
+
+        local module_metadata
+        if ! module_metadata=$(deploy_module "$module" "$binary_path"); then
+            echo -e "${RED}❌ Halting deployment due to deployment failure of '$module'.${NC}" >&2
+            exit 1
+        fi
+
+        update_manifest "$module_metadata"
+    done
+
+    echo -e "\n${GREEN}🎉 All changed modules built and deployed successfully!${NC}" >&2
 }
 
+# Pass all script arguments to main
 main "$@"
