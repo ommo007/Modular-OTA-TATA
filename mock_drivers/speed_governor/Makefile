@@ -38,13 +38,17 @@ $(BUILD_DIR)/$(LDSCRIPT):
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	mkdir -p $(BUILD_DIR)
+	@echo "🛠️ Compiling: $<"
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT)
-	$(CC) $(LDFLAGS) $(OBJECTS) -lgcc -lm -o $@
+	@echo "📌 Linking ELF..."
+	$(CC) $(LDFLAGS) $(OBJECTS) -lgcc -lm -o $@ || { echo "❌ Failed to link ELF"; exit 1; }
 	$(SIZE) $@
 
 $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf
+	@echo "📦 Converting ELF to BIN..."
+	@if [ ! -f $< ]; then echo "❌ ELF file missing: $<"; ls -l $(BUILD_DIR); exit 1; fi
 	$(OBJCOPY) -O binary $< $@
 	@echo "Binary size: $$(stat -f%z $@) bytes"
 	@echo "VERSION: This is the updated v1.1.0 that fixes highway speed limit issue"

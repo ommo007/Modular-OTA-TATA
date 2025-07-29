@@ -95,10 +95,20 @@ deploy_module() {
     echo -e "\n${BLUE}--- Processing Module: $module_name ---${NC}" >&2
     cd "$module_path"
 
+    echo "📂 Verifying contents of $module_path:"
+    ls -l
+    echo "📂 Verifying contents of $module_path/src:"
+    ls -l src || echo "❌ src directory not found!"
+
     echo "🔨 Building binary..." >&2
     if ! make clean && make build; then echo -e "${RED}❌ Build failed.${NC}" >&2; return 1; fi
     local binary_path="build/$module_name.bin"
-    if [ ! -f "$binary_path" ]; then echo -e "${RED}❌ Binary not found after build.${NC}" >&2; return 1; fi
+    if [ ! -f "$binary_path" ]; then
+        echo -e "${RED}❌ Binary not found at $binary_path${NC}" >&2
+        echo "📁 Contents of build/ directory:"
+        ls -l build/
+        return 1
+    fi
     echo -e "${GREEN}✅ Build successful.${NC}" >&2
 
     local version=$(get_next_version "$module_name")
