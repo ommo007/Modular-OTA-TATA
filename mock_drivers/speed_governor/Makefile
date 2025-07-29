@@ -57,7 +57,7 @@ $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf | $(BUILD_DIR)
 	@echo "VERSION: This is the updated v1.1.1 that fixes highway speed limit issue"
 
 # Targets for GitHub Actions
-build: $(BUILD_DIR)/$(MODULE_NAME).bin
+build: $(BUILD_DIR) $(BUILD_DIR)/$(MODULE_NAME).bin
 
 clean:
 	rm -rf $(BUILD_DIR)
