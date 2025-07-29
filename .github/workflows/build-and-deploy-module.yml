@@ -15,10 +15,8 @@ jobs:
   build-and-deploy:
     name: 'Build & Deploy Changed Modules'
     runs-on: ubuntu-latest
-
     outputs:
-      any_changed: ${{ steps.changed_files.outputs.any_changed }}
-      modules_deployed: ${{ steps.deploy.outputs.modules_deployed }}
+      any_modules_deployed: ${{ steps.deploy.outputs.any_modules_deployed }}
 
     steps:
       - name: '🛒 Checkout Repository'
@@ -75,73 +73,56 @@ jobs:
         run: |
           chmod +x ./scripts/deploy-to-supabase.sh
 
-      - name: '🏗️ Build Changed Modules'
+      - name: '🏗️ Build & Deploy Changed Modules'
+        id: deploy
         if: steps.changed_files.outputs.any_changed == 'true'
         run: |
-          echo "🔍 Building changed modules..."
           echo "Changed files: ${{ steps.changed_files.outputs.all_changed_files }}"
           
           # Extract unique module directories from changed files
           changed_modules=$(echo "${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' '\n' | grep -E '^mock_drivers/[^/]+/' | sed 's|mock_drivers/\([^/]*\)/.*|\1|' | sort -u)
           
           if [ -z "$changed_modules" ]; then
-            echo "❌ No valid module directories found in changed files"
-            exit 1
+            echo "✅ No module directories were changed. Nothing to do."
+            exit 0
           fi
           
-          echo "📦 Modules to build:"
-          echo "$changed_modules" | while read module; do
-            echo "  • $module"
-          done
+          echo "📦 Modules to process:"
+          echo "$changed_modules"
           
-          # Build each changed module
-          build_success=true
+          build_or_deploy_failed=false
+          
+          # Loop through and process each module
           echo "$changed_modules" | while read module; do
-            if [ -n "$module" ] && [ -d "mock_drivers/$module" ]; then
-              echo "🔨 Building module: $module"
-              cd "mock_drivers/$module"
-              
-              # Check if Makefile exists
-              if [ ! -f "Makefile" ]; then
-                echo "⚠️  Warning: No Makefile found for $module, skipping..."
-                cd ../..
-                continue
-              fi
-              
-              # Build the module
-              if make clean && make build; then
-                echo "✅ Successfully built: $module"
-              else
-                echo "❌ Failed to build: $module"
-                build_success=false
-              fi
-              cd ../..
-            else
-              echo "⚠️  Warning: Module directory not found: mock_drivers/$module"
+            echo "--- Processing Module: $module ---"
+            
+            # 1. Build the module
+            echo "🔨 Building module: $module"
+            if ! make -C "mock_drivers/$module" clean || ! make -C "mock_drivers/$module" build; then
+              echo "❌ Build failed for: $module"
+              build_or_deploy_failed=true
+              continue # Skip to the next module
             fi
+            echo "✅ Build successful for: $module"
+
+            # 2. Deploy the module
+            binary_path="mock_drivers/$module/build/$module.bin"
+            echo "🚀 Deploying module: $module from $binary_path"
+            if ! ./scripts/deploy-to-supabase.sh "$module" "$binary_path"; then
+              echo "❌ Deployment failed for: $module"
+              build_or_deploy_failed=true
+              continue # Skip to the next module
+            fi
+            echo "✅ Deployment successful for: $module"
           done
           
-          if [ "$build_success" = false ]; then
-            echo "❌ One or more modules failed to build"
+          if [ "$build_or_deploy_failed" = true ]; then
+            echo "❌ One or more modules failed to build or deploy."
             exit 1
           fi
           
-          echo "✅ All modules built successfully"
-
-      - name: '🚀 Deploy Modules with Auto-Versioning'
-        id: deploy
-        if: steps.changed_files.outputs.any_changed == 'true'
-        env:
-          GITHUB_RUN_NUMBER: ${{ github.run_number }}
-          GITHUB_SHA: ${{ github.sha }}
-          GITHUB_REF: ${{ github.ref }}
-        run: |
-          echo "🔍 Changed files: ${{ steps.changed_files.outputs.all_changed_files }}"
-          echo "🏗️ Starting intelligent deployment process..."
-          ./scripts/deploy-to-supabase.sh ${{ steps.changed_files.outputs.all_changed_files }}
-
-          # Set output for Job 2
-          echo "modules_deployed=true" >> "$GITHUB_OUTPUT"
+          echo "any_modules_deployed=true" >> "$GITHUB_OUTPUT"
+          echo "✅ All changed modules processed successfully."
 
       - name: '📊 Report Deployment Summary'
         if: always()
@@ -149,19 +130,12 @@ jobs:
           echo "=========================================="
           echo "🎯 DEPLOYMENT SUMMARY"
           echo "=========================================="
-          if [ "${{ steps.changed_files.outputs.any_changed }}" == 'true' ]; then
-            if [ "${{ job.status }}" == "success" ]; then
-              echo "✅ SUCCESS: All changed modules built and deployed successfully"
-              echo "🔗 Supabase Storage: ${{ env.SUPABASE_URL }}/dashboard/project/_/storage/buckets/ota-modules"
-              echo "📦 Changed Files:"
-              echo "${{ steps.changed_files.outputs.all_changed_files }}" | tr ' ' '\n' | while read file; do
-                echo "  • $file"
-              done
-            else
-              echo "❌ FAILED: Build or deployment encountered errors"
-            fi
+          if [ "${{ steps.changed_files.outputs.any_changed }}" != 'true' ]; then
+            echo "ℹ️ No module changes were detected in the push."
+          elif [ "${{ job.status }}" == "success" ]; then
+            echo "✅ SUCCESS: All changed modules were built and deployed."
           else
-            echo "ℹ️ No module changes detected"
+            echo "❌ FAILED: The workflow encountered an error."
           fi
           echo "=========================================="
 
@@ -169,20 +143,20 @@ jobs:
     name: 'Validate Deployment'
     runs-on: ubuntu-latest
     needs: build-and-deploy
-    if: needs.build-and-deploy.outputs.modules_deployed == 'true' && needs.build-and-deploy.result == 'success'
-
+    if: success() && needs.build-and-deploy.outputs.any_modules_deployed == 'true'
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-
     steps:
       - name: '✅ Validate Manifest Accessibility'
         run: |
           echo "🔍 Checking if manifest is accessible..."
-          if curl -f -s "${{ env.SUPABASE_URL }}/storage/v1/object/ota-modules/manifest.json" \
-             -H "Authorization: Bearer ${{ env.SUPABASE_SERVICE_KEY }}" > /dev/null; then
-            echo "✅ Manifest is accessible"
+          # Give storage a moment to become consistent
+          sleep 5 
+          if curl --fail -s -H "Authorization: Bearer ${{ env.SUPABASE_SERVICE_KEY }}" "${{ env.SUPABASE_URL }}/storage/v1/object/public/$SUPABASE_BUCKET/manifest.json" > /dev/null; then
+            echo "✅ Manifest is accessible and valid."
           else
-            echo "⚠️  Warning: Manifest may not be accessible"
+            echo "❌ ERROR: Manifest is not accessible. Please check Supabase storage."
+            exit 1
           fi
-          echo "🎉 Deployment validation completed"
+          echo "🎉 Deployment validation completed successfully."

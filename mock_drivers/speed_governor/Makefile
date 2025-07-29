@@ -79,7 +79,6 @@ $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf
 	@echo "Generating raw binary..."
 	$(OBJCOPY) -O binary $< $@
 	@echo "Binary size: $$($(STAT_SIZE) $@) bytes"
-	@echo "VERSION: This is the updated v1.1.1 that fixes highway speed limit issue"
 
 # Targets for GitHub Actions
 build: check-toolchain $(BUILD_DIR)/$(LDSCRIPT) $(BUILD_DIR)/$(MODULE_NAME).bin
