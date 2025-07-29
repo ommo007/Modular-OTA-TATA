@@ -1,2 +1,5 @@
 # Configuration file with credentials
 esp32_loader_firmware/include/config.h 
+.pio
+.vscode
+ingested_data.txt

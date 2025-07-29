@@ -10,6 +10,9 @@
 #include "mbedtls/sha256.h"
 #include "mbedtls/base64.h"
 
+// Forward declarations - CRITICAL FIX
+static bool verify_signature(const char* file_path, const char* signature_b64, const char* public_key_pem);
+
 // Internal functions
 static bool download_manifest(OTAUpdater* updater, StaticJsonDocument<2048>& manifest);
 static bool parse_manifest_for_updates(OTAUpdater* updater, const StaticJsonDocument<2048>& manifest);
@@ -297,7 +300,7 @@ const char* ota_updater_get_module_version(OTAUpdater* updater, const char* modu
     return nullptr; // Module not found
 }
 
-// Add signature verification function
+// FIXED: Signature verification function implementation
 static bool verify_signature(const char* file_path, const char* signature_b64, const char* public_key_pem) {
     if (!file_path || !signature_b64 || !public_key_pem) {
         log_error("Invalid parameters for signature verification");
@@ -327,33 +330,34 @@ static bool verify_signature(const char* file_path, const char* signature_b64, c
     
     // Calculate SHA256 hash of the file
     unsigned char file_hash[32];
-    ret = calculate_file_hash_raw(file_path, file_hash);
-    if (!ret) {
+    if (!calculate_file_hash_raw(file_path, file_hash)) {
         log_error("Failed to calculate file hash for signature verification");
         goto cleanup;
     }
     
-    // Base64 decode the signature
-    unsigned char signature[256]; // RSA-2048 signature is 256 bytes
-    size_t signature_len = 0;
-    
-    ret = mbedtls_base64_decode(signature, sizeof(signature), &signature_len, 
-                               (const unsigned char*)signature_b64, strlen(signature_b64));
-    if (ret != 0) {
-        log_error("Failed to decode base64 signature");
-        goto cleanup;
-    }
-    
-    // Verify the signature
-    ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, file_hash, sizeof(file_hash), signature, signature_len);
-    if (ret == 0) {
-        log_info("Signature verification PASSED");
-        verification_result = true;
-    } else {
-        char error_buf[100];
-        mbedtls_strerror(ret, error_buf, sizeof(error_buf));
-        Serial.printf("Signature verification FAILED: %s\n", error_buf);
-        verification_result = false;
+    // Base64 decode the signature - FIX: Move variable declarations to top
+    {
+        unsigned char signature[256]; // RSA-2048 signature is 256 bytes
+        size_t signature_len = 0;
+        
+        ret = mbedtls_base64_decode(signature, sizeof(signature), &signature_len, 
+                                   (const unsigned char*)signature_b64, strlen(signature_b64));
+        if (ret != 0) {
+            log_error("Failed to decode base64 signature");
+            goto cleanup;
+        }
+        
+        // Verify the signature
+        ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256, file_hash, sizeof(file_hash), signature, signature_len);
+        if (ret == 0) {
+            log_info("Signature verification PASSED");
+            verification_result = true;
+        } else {
+            char error_buf[100];
+            mbedtls_strerror(ret, error_buf, sizeof(error_buf));
+            Serial.printf("Signature verification FAILED: %s\n", error_buf);
+            verification_result = false;
+        }
     }
     
 cleanup:
@@ -404,7 +408,8 @@ static bool parse_manifest_for_updates(OTAUpdater* updater, const StaticJsonDocu
         const char* module_name = supported_modules[i];
         
         if (manifest.containsKey(module_name)) {
-            JsonObject module_info = manifest[module_name];
+            // FIXED: Proper ArduinoJson v6 syntax
+            JsonVariantConst module_info = manifest[module_name];
             
             String available_version = module_info["latest_version"].as<String>();
             const char* sha256_hash = module_info["sha256"] | "missing";
@@ -573,4 +578,4 @@ static void log_error(const char* message) {
 
 static void log_info(const char* message) {
     Serial.printf("[INFO] OTA: %s\n", message);
-} 
+}

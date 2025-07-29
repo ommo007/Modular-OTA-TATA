@@ -83,4 +83,4 @@ bool ota_rollback_module(const char* module_name);
 }
 #endif
 
-#endif // OTA_UPDATER_H 
+#endif // OTA_UPDATER_H

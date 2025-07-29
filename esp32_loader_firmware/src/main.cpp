@@ -8,7 +8,7 @@
 #include "system_api.h"
 #include "ota_updater.h"
 #include "module_loader.h"
-#include "config.h"  // Include externalized configuration
+#include "config.h"  // Include externalized configuration - MISSING SEMICOLON FIXED
 
 // GPIO Pin definitions
 #define LED_YELLOW_PIN 2
@@ -45,7 +45,7 @@ const unsigned long SENSOR_READ_INTERVAL = 1000;   // 1 second
 // LED feedback system - Visual status indicators
 // 💛 Yellow LED: Slow blink = Update available, Fast blink = Downloading
 // 💚 Green LED: Solid = Update success (5 seconds)
-// ❤️  Red LED: Solid = Update failure (8 seconds)
+// ❤  Red LED: Solid = Update failure (8 seconds)
 unsigned long last_led_blink_time = 0;
 bool led_blink_state = false;
 const unsigned long SLOW_BLINK_INTERVAL = 1000;    // 1 second for slow blink
@@ -126,7 +126,7 @@ void setup() {
             Serial.printf("✅ Speed Governor v%s loaded and tracked\n", module->version);
         }
     } else {
-        Serial.println("⚠️  Speed governor module not found (will be downloaded if available)");
+        Serial.println("⚠  Speed governor module not found (will be downloaded if available)");
     }
     
     // Load distance sensor module
@@ -137,7 +137,7 @@ void setup() {
             Serial.printf("✅ Distance Sensor v%s loaded and tracked\n", module->version);
         }
     } else {
-        Serial.println("⚠️  Distance sensor module not found (will be downloaded if available)");
+        Serial.println("⚠  Distance sensor module not found (will be downloaded if available)");
     }
     
     current_state = STATE_NORMAL_OPERATION;
@@ -191,7 +191,7 @@ void setup_wifi() {
         Serial.println("   🌐 Ready for OTA server communication");
     } else {
         Serial.println("\n❌ WiFi connection failed!");
-        Serial.println("   ⚠️  OTA updates will not be available");
+        Serial.println("   ⚠  OTA updates will not be available");
     }
 }
 
@@ -266,7 +266,7 @@ void handle_state_machine() {
             // Wait for vehicle idle state
             if (vehicle_idle) {
                 Serial.println("🚗 Vehicle idle detected - safe to update!");
-                Serial.println("⬇️  Starting secure download process...");
+                Serial.println("⬇  Starting secure download process...");
                 current_state = STATE_DOWNLOADING_UPDATE;
                 set_led_state_impl(LED_YELLOW, false); // Turn off blinking
                 last_led_blink_time = current_time; // Reset blink timer
@@ -308,7 +308,7 @@ void handle_state_machine() {
                         success_state_start_time = current_time;
                     } else {
                         Serial.println("❌ Module update failed!");
-                        Serial.println("   ❤️  Red LED: Update failure");
+                        Serial.println("   ❤  Red LED: Update failure");
                         
                         // Turn off blinking yellow LED and turn on solid red
                         set_led_state_impl(LED_YELLOW, false);
@@ -399,12 +399,12 @@ void update_sensors() {
                 if (strcmp(distance_module->version, "1.0.0") == 0) {
                     Serial.printf("📏 Distance Sensor v%s: %.1f cm\n", distance_module->version, distance);
                     if (distance_interface->is_object_detected && distance_interface->is_object_detected(30.0f)) {
-                        Serial.println("   ⚠️  Object detected within 30cm!");
+                        Serial.println("   ⚠  Object detected within 30cm!");
                     }
                 } else {
                     Serial.printf("📏 Distance Sensor v%s: %.0f mm (improved precision!)\n", distance_module->version, distance);
                     if (distance_interface->is_object_detected && distance_interface->is_object_detected(300.0f)) {
-                        Serial.println("   ⚠️  Object detected within 300mm!");
+                        Serial.println("   ⚠  Object detected within 300mm!");
                     }
                     if (strcmp(distance_module->version, "1.1.0") == 0) {
                         Serial.println("   ✨ Enhanced precision with millimeter units!");
@@ -511,5 +511,4 @@ const char* get_device_id_impl() {
 const char* get_module_version_impl(const char* module_name) {
     LoadedModule* module = module_loader_get_module(&module_loader, module_name);
     return module ? module->version : "unknown";
-} 
-} 
+}
