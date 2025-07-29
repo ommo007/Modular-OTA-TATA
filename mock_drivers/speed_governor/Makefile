@@ -30,7 +30,7 @@ CFLAGS = -Os -mlongcalls -ffunction-sections -fdata-sections \
 
 LDFLAGS = -nostdlib -Wl,--gc-sections -T $(BUILD_DIR)/$(LDSCRIPT) -lgcc -lm
 
-# Cross-platform stat command
+# Cross-platform file size command
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
     STAT_SIZE = stat -f%z
@@ -74,7 +74,7 @@ $(BUILD_DIR)/$(MODULE_NAME).elf: $(OBJECTS) $(BUILD_DIR)/$(LDSCRIPT)
 	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
 	$(SIZE) $@
 
-# Generate raw binary
+# Generate raw binary - FIXED stat command here
 $(BUILD_DIR)/$(MODULE_NAME).bin: $(BUILD_DIR)/$(MODULE_NAME).elf
 	@echo "Generating raw binary..."
 	$(OBJCOPY) -O binary $< $@

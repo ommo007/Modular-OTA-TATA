@@ -82,14 +82,27 @@ upload_file() {
     local content_type="$3"
 
     echo -e "${YELLOW}☁️  Uploading:${NC} $local_path -> $remote_path" >&2
-    local http_code=$(curl -s -w "%{http_code}" -o /dev/null \
+    echo -e "${BLUE}📊 File size: $(get_file_size "$local_path") bytes${NC}" >&2
+    echo -e "${BLUE}🔗 URL: $SUPABASE_URL/storage/v1/object/ota-modules/$remote_path${NC}" >&2
+    
+    # Create a temporary file to capture the full response
+    local temp_response=$(mktemp)
+    
+    local http_code=$(curl -s -w "%{http_code}" -o "$temp_response" \
         -X POST \
         "$SUPABASE_URL/storage/v1/object/ota-modules/$remote_path" \
         -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
         -H "Content-Type: $content_type" \
         --data-binary "@$local_path")
     
-    if [ "$http_code" -eq 200 ]; then
+    echo -e "${BLUE}📡 HTTP Response Code: $http_code${NC}" >&2
+    echo -e "${BLUE}📄 Response Body:${NC}" >&2
+    cat "$temp_response" >&2
+    echo >&2
+    
+    rm -f "$temp_response"
+    
+    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
         echo -e "${GREEN}✅ Upload successful (HTTP $http_code).${NC}" >&2
         return 0
     else
@@ -201,7 +214,21 @@ EOF
     local versioned_filename="${module_name}-v${version}.bin"
     
     echo "☁️  Uploading immutable versioned artifact ($versioned_filename)..." >&2
+    
+    # Verify file exists and is readable
+    if [ ! -r "$binary_path" ]; then
+        echo -e "${RED}❌ Binary file is not readable: $binary_path${NC}" >&2
+        cd "$PROJECT_ROOT"
+        return 1
+    fi
+    
+    echo -e "${BLUE}📁 About to upload file:${NC}" >&2
+    echo -e "${BLUE}  Local path: $binary_path${NC}" >&2
+    echo -e "${BLUE}  Remote path: $module_name/$versioned_filename${NC}" >&2
+    echo -e "${BLUE}  File permissions: $(ls -l "$binary_path")${NC}" >&2
+    
     if ! upload_file "$binary_path" "$module_name/$versioned_filename" "application/octet-stream"; then 
+        echo -e "${RED}❌ Failed to upload versioned binary${NC}" >&2
         cd "$PROJECT_ROOT"
         return 1
     fi
@@ -242,6 +269,23 @@ update_manifest() {
 
 # --- MAIN ---
 main() {
+    # Test Supabase connection first
+    echo -e "${BLUE}🔗 Testing Supabase connection...${NC}" >&2
+    local test_response=$(mktemp)
+    local test_code=$(curl -s -w "%{http_code}" -o "$test_response" \
+        "$SUPABASE_URL/storage/v1/bucket/ota-modules" \
+        -H "Authorization: Bearer $SUPABASE_SERVICE_KEY")
+    
+    echo -e "${BLUE}📡 Bucket test HTTP code: $test_code${NC}" >&2
+    echo -e "${BLUE}📄 Bucket test response:${NC}" >&2
+    cat "$test_response" >&2
+    echo >&2
+    rm -f "$test_response"
+    
+    if [ "$test_code" -ne 200 ]; then
+        echo -e "${YELLOW}⚠️  Warning: Bucket test failed, but continuing anyway...${NC}" >&2
+    fi
+
     declare -A modules_to_build
     for file in $@; do
         if [[ $file == mock_drivers/* ]]; then
