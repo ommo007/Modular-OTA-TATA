@@ -1,0 +1,111 @@
+# GPIO Configuration for Raspberry Pi OTA System
+# Pin numbering using wiringPi numbering scheme
+
+# LED Configuration
+leds:
+  # Status LEDs for OTA feedback
+  yellow_led:
+    pin: 0  # wiringPi pin 0 (BCM 17)
+    description: "Update Available Indicator"
+    initial_state: false
+    
+  green_led:
+    pin: 1  # wiringPi pin 1 (BCM 18)
+    description: "Success/Normal Operation Indicator"
+    initial_state: false
+    
+  red_led:
+    pin: 2  # wiringPi pin 2 (BCM 27)
+    description: "Error/Failure Indicator"
+    initial_state: false
+
+# Button Configuration
+buttons:
+  update_button:
+    pin: 3  # wiringPi pin 3 (BCM 22)
+    description: "Manual Update Trigger Button"
+    pull_mode: "up"  # up, down, or none
+    debounce_time: 50  # milliseconds
+    
+  reset_button:
+    pin: 4  # wiringPi pin 4 (BCM 23)
+    description: "System Reset Button"
+    pull_mode: "up"
+    debounce_time: 50
+
+# Sensor Pins (for mock sensor implementations)
+sensors:
+  distance_sensor:
+    trigger_pin: 5  # wiringPi pin 5 (BCM 24)
+    echo_pin: 6     # wiringPi pin 6 (BCM 25)
+    description: "HC-SR04 Ultrasonic Distance Sensor"
+    max_distance: 400  # cm
+    
+  temperature_sensor:
+    data_pin: 7  # wiringPi pin 7 (BCM 4)
+    description: "DS18B20 Temperature Sensor"
+    resolution: 12  # bits
+    
+  # Analog sensors (using MCP3008 ADC if needed)
+  speed_sensor:
+    adc_channel: 0
+    description: "Speed/RPM Sensor Input"
+    calibration_factor: 1.0
+
+# I2C Configuration (if needed for advanced sensors)
+i2c:
+  enabled: false
+  address: 0x48
+  bus: 1
+
+# SPI Configuration (for ADC or other SPI devices)
+spi:
+  enabled: false
+  channel: 0
+  speed: 1000000  # 1MHz
+
+# PWM Configuration (for advanced LED control or servo control)
+pwm:
+  enabled: false
+  pins:
+    servo_pin: 8  # wiringPi pin 8 (BCM 14)
+    pwm_led_pin: 9  # wiringPi pin 9 (BCM 15)
+
+# GPIO Setup Options
+setup:
+  # Initialization options
+  setup_mode: "wiringPi"  # wiringPi, BCM, or BOARD
+  
+  # Pin configuration
+  output_pins: [0, 1, 2]  # LED pins
+  input_pins: [3, 4]      # Button pins
+  
+  # Safety settings
+  cleanup_on_exit: true
+  export_pins: true
+  
+  # Timing settings
+  button_poll_interval: 0.1  # seconds
+  led_update_interval: 0.05  # seconds
+
+# Pin Mapping Reference (for documentation)
+pin_mapping:
+  wiringPi_to_bcm:
+    0: 17   # Yellow LED
+    1: 18   # Green LED
+    2: 27   # Red LED
+    3: 22   # Update Button
+    4: 23   # Reset Button
+    5: 24   # Distance Trigger
+    6: 25   # Distance Echo
+    7: 4    # Temperature Data
+  
+  physical_pins:
+    0: 11   # Physical pin 11
+    1: 12   # Physical pin 12
+    2: 13   # Physical pin 13
+    3: 15   # Physical pin 15
+    4: 16   # Physical pin 16
+    5: 18   # Physical pin 18
+    6: 22   # Physical pin 22
+    7: 7    # Physical pin 7 

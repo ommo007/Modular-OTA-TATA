@@ -1,0 +1,161 @@
+# Logging Configuration for Raspberry Pi OTA System
+# Replaces ESP32 Serial.println with comprehensive Python logging
+
+version: 1
+disable_existing_loggers: false
+
+# Formatter definitions
+formatters:
+  standard:
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    datefmt: '%Y-%m-%d %H:%M:%S'
+  
+  detailed:
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(module)s - %(funcName)s:%(lineno)d - %(message)s'
+    datefmt: '%Y-%m-%d %H:%M:%S'
+  
+  colored:
+    '()': colorlog.ColoredFormatter
+    format: '%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    datefmt: '%H:%M:%S'
+    log_colors:
+      DEBUG: cyan
+      INFO: green
+      WARNING: yellow
+      ERROR: red
+      CRITICAL: bold_red
+
+# Handler definitions
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: colored
+    stream: ext://sys.stdout
+  
+  file_handler:
+    class: logging.handlers.RotatingFileHandler
+    level: DEBUG
+    formatter: detailed
+    filename: ./logs/system.log
+    maxBytes: 10485760  # 10MB
+    backupCount: 5
+    encoding: utf8
+  
+  error_file_handler:
+    class: logging.handlers.RotatingFileHandler
+    level: ERROR
+    formatter: detailed
+    filename: ./logs/errors.log
+    maxBytes: 5242880   # 5MB
+    backupCount: 3
+    encoding: utf8
+  
+  # Module-specific handlers
+  ota_handler:
+    class: logging.handlers.RotatingFileHandler
+    level: DEBUG
+    formatter: standard
+    filename: ./logs/ota.log
+    maxBytes: 5242880   # 5MB
+    backupCount: 3
+    encoding: utf8
+  
+  module_handler:
+    class: logging.handlers.RotatingFileHandler
+    level: DEBUG
+    formatter: standard
+    filename: ./logs/modules.log
+    maxBytes: 5242880   # 5MB
+    backupCount: 3
+    encoding: utf8
+  
+  gpio_handler:
+    class: logging.handlers.RotatingFileHandler
+    level: DEBUG
+    formatter: standard
+    filename: ./logs/gpio.log
+    maxBytes: 2097152   # 2MB
+    backupCount: 2
+    encoding: utf8
+
+# Logger definitions
+loggers:
+  # Main system logger
+  rpi_ota_system:
+    level: DEBUG
+    handlers: [console, file_handler, error_file_handler]
+    propagate: false
+  
+  # OTA update system logger
+  rpi_ota_system.ota_updater:
+    level: DEBUG
+    handlers: [console, ota_handler, error_file_handler]
+    propagate: false
+  
+  # Module system logger
+  rpi_ota_system.module_loader:
+    level: DEBUG
+    handlers: [console, module_handler, error_file_handler]
+    propagate: false
+  
+  # GPIO hardware logger
+  rpi_ota_system.gpio:
+    level: INFO
+    handlers: [console, gpio_handler]
+    propagate: false
+  
+  # Individual module loggers
+  modules.speed_governor:
+    level: DEBUG
+    handlers: [console, module_handler]
+    propagate: false
+  
+  modules.distance_sensor:
+    level: DEBUG
+    handlers: [console, module_handler]
+    propagate: false
+  
+  # System API logger
+  rpi_ota_system.system_api:
+    level: INFO
+    handlers: [console, file_handler]
+    propagate: false
+
+# Root logger configuration
+root:
+  level: WARNING
+  handlers: [console, error_file_handler]
+
+# Additional logging configuration
+logging_config:
+  # Directory settings
+  log_directory: "./logs"
+  create_log_dir: true
+  
+  # Performance settings
+  async_logging: false
+  buffer_size: 8192
+  
+  # Security settings
+  log_sensitive_data: false
+  mask_passwords: true
+  mask_api_keys: true
+  
+  # Module-specific settings
+  modules:
+    log_module_lifecycle: true
+    log_module_errors: true
+    log_performance_metrics: true
+  
+  # OTA-specific settings
+  ota:
+    log_download_progress: true
+    log_verification_steps: true
+    log_file_operations: true
+  
+  # GPIO-specific settings
+  gpio:
+    log_pin_changes: false  # Can be noisy
+    log_button_presses: true
+    log_led_changes: true 

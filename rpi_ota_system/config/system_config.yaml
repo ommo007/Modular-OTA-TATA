@@ -1,0 +1,122 @@
+# Raspberry Pi OTA System Configuration
+# Replaces ESP32 config.h functionality
+
+# Device Information
+device:
+  device_id: "rpi_001"  # Unique identifier for this device
+  device_name: "RaspberryPi_OTA_Node"
+  firmware_version: "1.0.0"
+  hardware_version: "RPi4B"
+
+# Network Configuration
+network:
+  wifi:
+    ssid: "YOUR_WIFI_SSID"
+    password: "YOUR_WIFI_PASSWORD"
+    connection_timeout: 30  # seconds
+    retry_attempts: 3
+  
+  # Static IP configuration (optional)
+  static_ip:
+    enabled: false
+    ip: "192.168.1.100"
+    gateway: "192.168.1.1"
+    subnet: "255.255.255.0"
+    dns: "8.8.8.8"
+
+# Supabase Configuration
+supabase:
+  url: "https://your-project.supabase.co"
+  anon_key: "your-anon-key-here"
+  service_role_key: "your-service-role-key-here"  # For secure operations
+  manifest_table: "firmware_manifest"
+  module_table: "modules"
+  device_table: "devices"
+
+# OTA Update Configuration
+ota:
+  check_interval: 300  # Check for updates every 5 minutes
+  download_timeout: 120  # Timeout for downloading updates
+  backup_enabled: true
+  backup_directory: "./backups"
+  signature_verification: true
+  public_key_path: "./config/public_key.pem"
+  
+  # Update behavior
+  auto_update: true
+  update_window:
+    start_hour: 2   # 2 AM
+    end_hour: 4     # 4 AM
+  
+  # Module update settings
+  module_hot_reload: true
+  module_verification_required: true
+
+# Module System Configuration
+modules:
+  base_path: "./modules"
+  manifest_file: "module_manifest.json"
+  load_timeout: 10  # seconds
+  
+  # Available modules (will be dynamically loaded)
+  available:
+    - name: "speed_governor"
+      version: "1.1.0"
+      enabled: true
+    - name: "distance_sensor"
+      version: "1.2.0"
+      enabled: true
+
+# System Settings
+system:
+  # Logging configuration
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  log_to_file: true
+  log_file_path: "./logs/system.log"
+  log_rotation_size: "10MB"
+  log_backup_count: 5
+  
+  # Performance settings
+  main_loop_interval: 1.0  # seconds
+  sensor_read_interval: 0.5  # seconds
+  status_update_interval: 10  # seconds
+  
+  # Error handling
+  max_consecutive_errors: 5
+  error_cooldown_period: 60  # seconds
+  
+  # System monitoring
+  monitor_cpu: true
+  monitor_memory: true
+  monitor_temperature: true
+  cpu_threshold: 80  # percent
+  memory_threshold: 80  # percent
+  temperature_threshold: 70  # degrees Celsius
+
+# Security Configuration
+security:
+  enable_signature_verification: true
+  certificate_path: "./config/certificates"
+  key_size: 2048
+  hash_algorithm: "SHA256"
+  
+  # API security
+  api_key_required: false
+  api_key: "your-api-key-here"
+  
+  # File permissions
+  module_permissions: "755"
+  config_permissions: "644"
+
+# Hardware Configuration (imported from gpio_config.yaml)
+hardware:
+  import_gpio_config: true
+  gpio_config_path: "./config/gpio_config.yaml"
+
+# Development and Debug Settings
+debug:
+  enabled: false
+  mock_sensors: false
+  simulate_updates: false
+  verbose_logging: false
+  test_mode: false 

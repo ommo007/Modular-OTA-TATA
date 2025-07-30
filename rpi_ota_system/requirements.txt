@@ -1,0 +1,32 @@
+# Raspberry Pi OTA System Dependencies
+# GPIO and Hardware Control
+wiringpi>=2.60.1
+
+# HTTP requests for OTA updates
+requests>=2.28.0
+
+# Configuration management
+pyyaml>=6.0
+
+# Cryptography for security and signature verification
+cryptography>=41.0.0
+
+# File system monitoring
+watchdog>=3.0.0
+
+# System monitoring and process management
+psutil>=5.9.0
+
+# Testing framework
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Additional utilities
+python-dateutil>=2.8.2
+importlib-metadata>=6.8.0
+
+# Optional: Supabase client (if using official client)
+supabase>=1.0.4
+
+# Logging enhancements
+colorlog>=6.7.0 
